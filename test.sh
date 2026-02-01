@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export BUILDKIT_PROGRESS=plain
+
+# ----------------------------------------
+# COLORS
+# ----------------------------------------
+BOLD="\033[1m"
+RED="\033[31m"
+GREEN="\033[32m"
+YELLOW="\033[33m"
+CYAN="\033[36m"
+RESET="\033[0m"
+
+# ----------------------------------------
+# CONFIG
+# ----------------------------------------
+COVERAGE_THRESHOLD="${COVERAGE_THRESHOLD:-80}"
+
+# ----------------------------------------
+# RESOLVE SCRIPT DIRECTORY AND CD INTO IT
+# ----------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+BIN_DIR="bin"
+LOG_DIR="log"
+
+# ----------------------------------------
+# CLEANUP TRAP
+# ----------------------------------------
+cleanup() {
+    echo -e "${YELLOW}${BOLD}→ Cleanup: clear .env and .env.keys…${RESET}"
+    echo '' > .env
+    [ -f .env.keys ] && rm .env.keys
+
+    echo -e "${YELLOW}${BOLD}→ Cleanup: stopping docker compose…${RESET}"
+    docker compose down >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+# ----------------------------------------
+# CLEAN WORKSPACE
+# ----------------------------------------
+echo -e "${YELLOW}${BOLD}→ Cleaning bin/ and log/ (preserving README.md)…${RESET}"
+
+clean_and_preserve_readme() {
+    local dir="$1"
+    local old="${dir}.old"
+
+    if [ -d "$dir" ]; then
+        mv "$dir" "$old"
+    fi
+
+    mkdir -p "$dir"
+
+    if [ -d "$old" ]; then
+        if [ -f "$old/README.md" ]; then
+            mv "$old/README.md" "$dir/README.md"
+        fi
+        rm -rf "$old"
+    fi
+}
+
+clean_and_preserve_readme "$BIN_DIR"
+clean_and_preserve_readme "$LOG_DIR"
+
+# ----------------------------------------
+# CREATE .env
+# ----------------------------------------
+echo -e "${YELLOW}${BOLD}→ Creating .env…${RESET}"
+echo "EXAMPLE1=1234" > .env
+
+# ----------------------------------------
+# DOCKER BAKE TEST
+# ----------------------------------------
+echo -e "${YELLOW}${BOLD}→ Running docker bake test…${RESET}"
+docker bake test
+
+# ----------------------------------------
+# VERIFY test.log EXISTS
+# ----------------------------------------
+echo -e "${YELLOW}${BOLD}→ Checking for test.log…${RESET}"
+
+TESTLOG=""
+if [ -f "$LOG_DIR/test.log" ]; then
+    TESTLOG="$LOG_DIR/test.log"
+elif [ -f "output/test.log" ]; then
+    TESTLOG="output/test.log"
+else
+    echo -e "${RED}${BOLD}ERROR:${RESET} test.log not found"
+    exit 1
+fi
+
+# ----------------------------------------
+# SUMMARIZE FAILED TESTS
+# ----------------------------------------
+echo -e "${YELLOW}${BOLD}→ Summarizing failed tests…${RESET}"
+
+FAILED_TESTS=$(awk '/^--- FAIL: / { print $3 }' "$TESTLOG")
+
+if [ -n "$FAILED_TESTS" ]; then
+    echo -e "${RED}${BOLD}❌ Failed tests:${RESET}"
+    echo "$FAILED_TESTS" | while read -r test; do
+        echo -e "   ${RED}- ${test}${RESET}"
+    done
+
+    COUNT=$(echo "$FAILED_TESTS" | wc -l | tr -d ' ')
+    echo -e "${RED}${BOLD}${COUNT} test(s) failed.${RESET}"
+    exit 1
+else
+    echo -e "${GREEN}${BOLD}✓ No failed tests.${RESET}"
+fi
+
+# ----------------------------------------
+# DOCKER BAKE BUILD
+# ----------------------------------------
+echo -e "${YELLOW}${BOLD}→ Running docker bake…${RESET}"
+docker bake
+
+# ----------------------------------------
+# ENCRYPT .env
+# ----------------------------------------
+echo -e "${YELLOW}${BOLD}→ Encrypting .env…${RESET}"
+
+docker run -it --rm \
+    -v "$SCRIPT_DIR":/app \
+    --workdir=/app \
+    --pull=always \
+    -u=64646:64646 \
+    --cap-drop=ALL \
+    --network=none \
+    --security-opt=no-new-privileges=true \
+    dotenv/dotenvx encrypt
+
+# ----------------------------------------
+# VERIFY .env ENCRYPTED
+# ----------------------------------------
+echo -e "${YELLOW}${BOLD}→ Checking .env contains encrypted value…${RESET}"
+if ! grep -q "=encrypted:" .env; then
+    echo -e "${RED}${BOLD}ERROR:${RESET} .env does not contain encrypted value"
+    exit 1
+fi
+
+# ----------------------------------------
+# COMPOSE UP
+# ----------------------------------------
+echo -e "${YELLOW}${BOLD}→ Starting docker compose…${RESET}"
+docker compose up -d --force-recreate
+
+# ----------------------------------------
+# VERIFY CLIENT LOGS
+# ----------------------------------------
+echo -e "${YELLOW}${BOLD}→ Waiting for client container to finish…${RESET}"
+docker logs -f ojster_example_client >/dev/null 2>&1 || true
+
+echo -e "${YELLOW}${BOLD}→ Checking client logs for decrypted EXAMPLE1=1234…${RESET}"
+if ! docker logs ojster_example_client 2>&1 | grep -q "EXAMPLE1=1234"; then
+    echo -e "${RED}${BOLD}→ Full client logs:${RESET}"
+    docker logs ojster_example_client
+    echo -e "${RED}${BOLD}ERROR:${RESET} client logs do not contain EXAMPLE1=1234"
+    exit 1
+fi
+
+# ----------------------------------------
+# EXTRACT COVERAGE
+# ----------------------------------------
+echo -e "${YELLOW}${BOLD}→ Extracting coverage percentage…${RESET}"
+COVERAGE=$(grep -oE "coverage: [0-9]+\.[0-9]+% of statements" "$TESTLOG" | tail -1 | awk '{print $2}' | tr -d '%')
+
+if [ -z "$COVERAGE" ]; then
+    echo -e "${RED}${BOLD}ERROR:${RESET} could not extract coverage from test.log"
+    exit 1
+fi
+
+echo -e "${CYAN}${BOLD}→ Coverage: ${COVERAGE}%${RESET}"
+
+# ----------------------------------------
+# ENFORCE COVERAGE THRESHOLD
+# ----------------------------------------
+awk -v cov="$COVERAGE" -v req="$COVERAGE_THRESHOLD" '
+BEGIN {
+    if (cov+0 < req+0) {
+        printf("ERROR: coverage %.1f%% is below required %.1f%%\n", cov, req)
+        exit 1
+    }
+}
+'
+
+echo -e "${GREEN}${BOLD}✓ All tests passed and coverage is sufficient.${RESET}"
