@@ -52,6 +52,36 @@ func captureStderr(t *testing.T, f func()) string {
 	return string(out)
 }
 
+func getUnixHTTPClient(socketPath string) *http.Client {
+	tr := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return net.Dial("unix", socketPath)
+		},
+	}
+	return &http.Client{Transport: tr, Timeout: 500 * time.Millisecond}
+}
+
+func startUnixHTTPServer(t *testing.T, handler http.Handler) (socketPath string, closeFunc func()) {
+	t.Helper()
+	socketPath = filepath.Join(t.TempDir(), "ojster.sock")
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("failed to listen on unix socket: %v", err)
+	}
+
+	srv := &http.Server{Handler: handler}
+
+	go func() {
+		_ = srv.Serve(ln)
+	}()
+
+	closeFunc = func() {
+		_ = srv.Close()
+		_ = ln.Close()
+	}
+	return socketPath, closeFunc
+}
+
 func runPost(t *testing.T, body []byte, cmd []string, priv string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest("POST", "/", bytes.NewReader(body))
@@ -121,7 +151,7 @@ func stubSleep(t *testing.T) {
 func stubPost(t *testing.T) {
 	t.Helper()
 	old := postMapToServerJSONFunc
-	postMapToServerJSONFunc = func(url string, m map[string]string) ([]byte, int, error) {
+	postMapToServerJSONFunc = func(socketPath string, m map[string]string) ([]byte, int, error) {
 		return nil, 0, fmt.Errorf("stubbed")
 	}
 	t.Cleanup(func() { postMapToServerJSONFunc = old })
@@ -149,11 +179,20 @@ func expectExitPanic(t *testing.T, code *int, want int) {
 	}
 }
 
-func waitForServer(t *testing.T, url string) {
+func waitForServer(t *testing.T, socketPath string) {
 	t.Helper()
 	deadline := time.Now().Add(500 * time.Millisecond)
+
+	tr := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return net.Dial("unix", socketPath)
+		},
+	}
+	client := &http.Client{Transport: tr, Timeout: 100 * time.Millisecond}
+
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(url + "/health")
+		req, _ := http.NewRequest("GET", "http://unix/health", nil)
+		resp, err := client.Do(req)
 		if err == nil {
 			resp.Body.Close()
 			return
@@ -365,7 +404,7 @@ func TestServe_TmpfsFailure_StatfsError(t *testing.T) {
 //
 
 func TestPostMapToServerJSON(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	socketPath, closeSrv := startUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		m := decodeJSON[map[string]string](t, body)
 		if m["A"] != "1" {
@@ -373,9 +412,9 @@ func TestPostMapToServerJSON(t *testing.T) {
 		}
 		w.Write([]byte(`{"OK":"yes"}`))
 	}))
-	defer ts.Close()
+	defer closeSrv()
 
-	respBody, status, err := postMapToServerJSON(ts.URL, map[string]string{"A": "1"})
+	respBody, status, err := postMapToServerJSON(socketPath, map[string]string{"A": "1"})
 	if err != nil {
 		t.Fatalf("postMapToServerJSON error: %v", err)
 	}
@@ -483,7 +522,7 @@ func TestRun_BasicFlow(t *testing.T) {
 	oldPost := postMapToServerJSONFunc
 	t.Cleanup(func() { postMapToServerJSONFunc = oldPost })
 
-	postMapToServerJSONFunc = func(url string, m map[string]string) ([]byte, int, error) {
+	postMapToServerJSONFunc = func(socketPath string, m map[string]string) ([]byte, int, error) {
 		if len(m) != 1 || m["SECRET"] != "encrypted:ABC" {
 			t.Fatalf("unexpected request map: %#v", m)
 		}
@@ -555,7 +594,7 @@ func TestRun_RetryScenarios(t *testing.T) {
 			t.Cleanup(func() { postMapToServerJSONFunc = oldPost })
 
 			call := 0
-			postMapToServerJSONFunc = func(url string, m map[string]string) ([]byte, int, error) {
+			postMapToServerJSONFunc = func(socketPath string, m map[string]string) ([]byte, int, error) {
 				resp := tc.responses[call]
 				code := tc.statuses[call]
 				call++
@@ -619,14 +658,8 @@ func TestServe_StartupAndHealth(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to get free port: %v", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	ln.Close()
-
-	t.Setenv("OJSTER_PORT", fmt.Sprintf("%d", port))
+	socketPath := filepath.Join(t.TempDir(), "ojster.sock")
+	t.Setenv("OJSTER_SOCKET_PATH", socketPath)
 
 	tmp := t.TempDir()
 	t.Setenv("OJSTER_PRIVATE_KEY_FILE", filepath.Join(tmp, ".env"))
@@ -637,10 +670,11 @@ func TestServe_StartupAndHealth(t *testing.T) {
 		close(done)
 	}()
 
-	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
-	waitForServer(t, baseURL)
+	waitForServer(t, socketPath)
 
-	resp, err := http.Get(baseURL + "/health")
+	client := getUnixHTTPClient(socketPath)
+
+	resp, err := client.Get("http://unix/health")
 	if err != nil {
 		t.Fatalf("GET /health failed: %v", err)
 	}
@@ -658,9 +692,10 @@ func TestServe_StartupAndHealth(t *testing.T) {
 	}
 }
 
-func TestServe_InvalidPort(t *testing.T) {
+func TestServe_InvalidSocketPath(t *testing.T) {
 	code := stubExit(t)
-	t.Setenv("OJSTER_PORT", "not-a-number")
-	defer expectExitPanic(t, code, 2)
+	// point to a directory that cannot be created/listened on
+	t.Setenv("OJSTER_SOCKET_PATH", "/definitely-not-existing-dir/ojster.sock")
+	defer expectExitPanic(t, code, 1)
 	serve(context.Background(), nil)
 }
