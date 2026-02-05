@@ -58,7 +58,7 @@ docker compose down
 
 ## Integrating existing stacks
 
-Add the 7-line snippet (marked **OJSTER INTEGRATION** in [compose.yaml](./compose.yaml)) to any service you want to integrate. Ojster acts as a lightweight `docker-init` replacement and injects decrypted values at process start — no need to modify entrypoints, commands, or rebuild images.
+Add the 4-line snippet (marked **OJSTER INTEGRATION** in [compose.yaml](./compose.yaml)) to any service you want to integrate. Ojster acts as a lightweight `docker-init` replacement and injects decrypted values at process start — no need to modify entrypoints, commands, or rebuild images.
 
 ## Comparison
 
@@ -110,11 +110,12 @@ Ojster does not provide the feature set of a full secrets platform. If that's wh
 - **Zero trust** — clients never hold private keys.
 - **Ephemeral secrets** — decrypted values never touch disk.
 - **Minimal client impact** — original entrypoints and runtime environments remain unchanged.
+- **Local IPC transport** — server without network stack.
 
 ### High-level flow
 
 1. **Client selection:** scan environment for values matching `OJSTER_REGEX` (configurable).
-2. **POST to server:** send `key → encrypted value` map.
+2. **HTTP over Unix socket:** client posts `key → encrypted value` map to the Ojster server over the Unix domain socket.
 3. **Server workdir:** create a tmpfs directory, write `.env`, symlink `.env.keys`.
 4. **Subprocess:** run `dotenvx get -o` (configurable) to decrypt in memory.
 5. **Validation:** ensure subprocess returns only requested keys.
@@ -130,14 +131,14 @@ Ojster does not provide the feature set of a full secrets platform. If that's wh
 
 ## Security considerations
 
-Securely provision the private key on the Ojster server host. Only the Ojster server should ever have access to the private key.
+Securely provision the private key on the Ojster server host. Only the Ojster server should ever have access to the private key. Access to the ojster volume (which contains the IPC socket file) is equivalent to the ability to request decryptions: any process that can open the socket can talk HTTP to the server and obtain decrypted values. Treat the socket like a sensitive IPC endpoint.
 
 ### Recommendations
 
 - Protect the private key both at rest (encrypted storage or HSM/TPM) and in transit.
 - Enforce strict private key file permissions: `chmod 600` and ownership matching UID/GID running the Ojster server.
 - Rotate keys if compromised; re-encrypt secrets as needed.
-- Use `internal: true` Docker networks; isolate each client/server pair.
+- Avoid sharing the IPC socket with untrusted containers or services.
 - Keep server container hardened: non-root, drop capabilities, set `no-new-privileges`, no DNS, no outbound network access, immutable rootfs, tmpfs for tmp files.
 
 ## Contributing and license

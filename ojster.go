@@ -28,7 +28,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -37,9 +36,9 @@ import (
 const header = `Ojster - GitOps-safe one-way encrypted secrets for Docker Compose
 
 Environment variables:
-  OJSTER_PORT
-      Port the server listens on (serve mode). Must be an integer 1..65535.
-      Default: 8080
+  OJSTER_SOCKET_PATH
+      Path to the Unix domain socket used for IPC between client and server.
+      Default: /mnt/ojster/ipc.sock
 
   OJSTER_PRIVATE_KEY_FILE
       Path to the private key file used by the subprocess (serve mode).
@@ -49,21 +48,17 @@ Environment variables:
       Regex used by the client (run mode) to select which env values to send.
       Default: ^'?(encrypted:[A-Za-z0-9+/=]+)'?$
 
-  OJSTER_SERVER_URL
-      URL the client posts to in run mode.
-      Default: http://ojster:8080
-
 Usage:
   ojster help
   ojster version
   ojster run [command...]
-      Client/bootstrap mode. Sends selected env values to OJSTER_SERVER_URL,
-      receives decrypted values, merges them into the environment and execs
-      [command...] (replacing the current process).
+      Client/bootstrap mode. Sends selected env values to the server over the
+      Unix domain socket, receives decrypted values, merges them into the
+      environment and execs [command...] (replacing the current process).
 
   ojster serve [command...]
-      Server mode. Listens for POST requests containing a JSON object of
-      key->value pairs. For each request:
+      Server mode. Listens on the Unix domain socket for POST requests
+      containing a JSON object of key->value pairs. For each request:
         - writes a temporary .env file,
         - symlinks OJSTER_PRIVATE_KEY_FILE to .env.keys,
         - runs the configured subprocess in that tmp dir,
@@ -218,6 +213,14 @@ func dotenvEscape(s string) string {
 	return "'" + s + "'"
 }
 
+func getSocketPath() string {
+	p := os.Getenv("OJSTER_SOCKET_PATH")
+	if p == "" {
+		return "/mnt/ojster/ipc.sock"
+	}
+	return p
+}
+
 // -------------------- RUN MODE (client) --------------------
 
 func hasUnexpectedKeys(reply map[string]string, requested map[string]struct{}) bool {
@@ -244,10 +247,7 @@ func run(nextArgs []string) {
 
 	log.Println("ojster run")
 
-	serverURL := os.Getenv("OJSTER_SERVER_URL")
-	if serverURL == "" {
-		serverURL = "http://ojster:8080"
-	}
+	socketPath := getSocketPath()
 
 	allEnv := environFunc()
 	requestMap := filterEnvByValue(allEnv)
@@ -266,7 +266,7 @@ func run(nextArgs []string) {
 	var newEnv map[string]string
 
 	for {
-		respBody, statusCode, err := postMapToServerJSONFunc(serverURL, requestMap)
+		respBody, statusCode, err := postMapToServerJSONFunc(socketPath, requestMap)
 
 		var replyMap map[string]string
 		decodeErr := json.Unmarshal(respBody, &replyMap)
@@ -295,14 +295,24 @@ func run(nextArgs []string) {
 	}
 }
 
-func postMapToServerJSON(url string, m map[string]string) ([]byte, int, error) {
+func postMapToServerJSON(socketPath string, m map[string]string) ([]byte, int, error) {
 	j, err := json.Marshal(m)
 	if err != nil {
 		return nil, 0, errf("failed to marshal request JSON: %v", err)
 	}
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	req, err := http.NewRequest("POST", url, bytes.NewReader(j))
+	tr := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return net.Dial("unix", socketPath)
+		},
+	}
+
+	client := &http.Client{
+		Timeout:   15 * time.Second,
+		Transport: tr,
+	}
+
+	req, err := http.NewRequest("POST", "http://unix/", bytes.NewReader(j))
 	if err != nil {
 		return nil, 0, errf("failed to create request: %v", err)
 	}
@@ -376,15 +386,7 @@ func serve(ctx context.Context, cmdArgs []string) {
 		exitFunc(1)
 	}
 
-	port := 8080
-	if p := os.Getenv("OJSTER_PORT"); p != "" {
-		pi, err := strconv.Atoi(p)
-		if err != nil || pi <= 0 || pi >= 65536 {
-			fmt.Fprintln(os.Stderr, errf("invalid OJSTER_PORT %q: must be integer between 1 and 65535", p))
-			exitFunc(2)
-		}
-		port = pi
-	}
+	socketPath := getSocketPath()
 
 	privateKeyFile := os.Getenv("OJSTER_PRIVATE_KEY_FILE")
 	if privateKeyFile == "" {
@@ -398,16 +400,23 @@ func serve(ctx context.Context, cmdArgs []string) {
 		handlePost(w, r, cmd, privateKeyFile)
 	})
 
-	addr := ":" + strconv.Itoa(port)
-	server := &http.Server{Addr: addr, Handler: loggingMiddleware(mux)}
+	_ = os.RemoveAll(socketPath)
 
-	ln, err := net.Listen("tcp", addr)
+	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, errf("failed to listen on %s: %v", addr, err))
+		fmt.Fprintln(os.Stderr, errf("failed to listen on unix socket %s: %v", socketPath, err))
 		exitFunc(1)
 	}
 
-	fmt.Fprintf(os.Stderr, "ojster serving on %s\n", addr)
+	if err := os.Chmod(socketPath, 0o666); err != nil {
+		fmt.Fprintln(os.Stderr, errf("failed to chmod socket %s: %v", socketPath, err))
+		ln.Close()
+		exitFunc(1)
+	}
+
+	server := &http.Server{Handler: loggingMiddleware(mux)}
+
+	fmt.Fprintf(os.Stderr, "ojster serving on unix socket %s\n", socketPath)
 
 	go func() {
 		<-ctx.Done()

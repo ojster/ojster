@@ -1,7 +1,10 @@
-# Ojster network: recommended 1 dedicated network per client
-networks:
-  ojster-bash:
-    internal: true                # No internet, no public DNS
+volumes:
+  ojster:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: noexec,uid=64646,gid=64646,mode=755
 
 secrets:
   private_key:
@@ -22,15 +25,15 @@ services:
     read_only: true               # Immutable rootfs
     tmpfs:                        # RAM-backed temporary workdir
       - /tmp:noexec               # No execute permission
-    volumes:                      # Mount ojster binary and private key
+    volumes:                      # Mount ojster binary and ipc volume
+      - ojster:/mnt/ojster:noexec
       - ./bin/ojster:/ojster:ro
     secrets:
-      - private_key
+      - private_key               # Mount private key
     entrypoint:
       - /ojster                   # Run ojster instead of dotenvx
       - serve
-    networks:
-      - ojster-bash
+    network_mode: none            # Run without network stack
 
   # Example ojster client: integrate as many containers as you like
   client:
@@ -44,15 +47,12 @@ services:
     
     ###########################################
     ######## START OJSTER INTEGRATION #########
-    ### add these 7 lines to your container ###
+    ### add these 4 lines to your container ###
 
     init: true                    # Prepend docker-init binary before entrypoint
     volumes:                      # Override the docker-init binary with with ojster
       - ./bin/ojster:/sbin/docker-init:ro
-    networks:                     # Allow communication with ojster server
-      - ojster-bash
-    depends_on:                   # Start ojster server before this container
-      - ojster
+      - ojster:/mnt/ojster:ro     # Mount shared volume for socket communication
 
     ###########################################  
     ########## END OJSTER INTEGRATION #########
