@@ -18,10 +18,11 @@ RESET="\033[0m"
 COVERAGE_THRESHOLD="${COVERAGE_THRESHOLD:-80}"
 
 # ----------------------------------------
-# RESOLVE SCRIPT DIRECTORY AND CD INTO IT
+# RESOLVE REPO ROOT AND CD INTO IT
 # ----------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
 
 BIN_DIR="bin"
 LOG_DIR="log"
@@ -85,10 +86,16 @@ echo -e "${YELLOW}${BOLD}→ Checking for test.log…${RESET}"
 TESTLOG=""
 if [ -f "$LOG_DIR/test.log" ]; then
     TESTLOG="$LOG_DIR/test.log"
-elif [ -f "output/test.log" ]; then
-    TESTLOG="output/test.log"
 else
     echo -e "${RED}${BOLD}ERROR:${RESET} test.log not found"
+    exit 1
+fi
+
+COVERAGETXT=""
+if [ -f "$LOG_DIR/coverage.txt" ]; then
+    COVERAGETXT="$LOG_DIR/coverage.txt"
+else
+    echo -e "${RED}${BOLD}ERROR:${RESET} coverage.txt not found"
     exit 1
 fi
 
@@ -124,7 +131,7 @@ docker bake
 echo -e "${YELLOW}${BOLD}→ Encrypting .env…${RESET}"
 
 docker run -it --rm \
-    -v "$SCRIPT_DIR":/app \
+    -v "$REPO_ROOT":/app \
     --workdir=/app \
     --pull=always \
     -u=64646:64646 \
@@ -163,13 +170,14 @@ if ! docker logs ojster_example_client 2>&1 | grep -q "EXAMPLE1=1234"; then
 fi
 
 # ----------------------------------------
-# EXTRACT COVERAGE
+# EXTRACT COVERAGE FROM coverage.txt
 # ----------------------------------------
 echo -e "${YELLOW}${BOLD}→ Extracting coverage percentage…${RESET}"
-COVERAGE=$(grep -oE "coverage: [0-9]+\.[0-9]+% of statements" "$TESTLOG" | tail -1 | awk '{print $2}' | tr -d '%')
+
+COVERAGE=$(grep -E "^total:" "$COVERAGETXT" | awk '{print $3}' | tr -d '%')
 
 if [ -z "$COVERAGE" ]; then
-    echo -e "${RED}${BOLD}ERROR:${RESET} could not extract coverage from test.log"
+    echo -e "${RED}${BOLD}ERROR:${RESET} could not extract coverage from coverage.txt"
     exit 1
 fi
 

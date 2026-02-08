@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+OUTFILE="ojster-all.go.txt"
+
+# Start fresh
+echo "// Combined Go source tree for ojster" > "$OUTFILE"
+echo "// Generated on $(date)" >> "$OUTFILE"
+echo "" >> "$OUTFILE"
+
+# Find all .go and _test.go files, sorted for deterministic output
+# Exclude vendor and build output directories
+find . \
+  -type f \
+  \( -name "*.go" -o -name "*_test.go" \) \
+  ! -path "./vendor/*" \
+  ! -path "./.git/*" \
+  ! -path "./build/*" \
+  | sort \
+  | while read -r file; do
+      echo "// =============================================" >> "$OUTFILE"
+      echo "// FILE: $file" >> "$OUTFILE"
+      echo "// =============================================" >> "$OUTFILE"
+      echo "" >> "$OUTFILE"
+      cat "$file" >> "$OUTFILE"
+      echo "" >> "$OUTFILE"
+      echo "" >> "$OUTFILE"
+    done
+
+echo "Wrote combined file to: $OUTFILE"
