@@ -146,15 +146,14 @@ Securely provision the private key on the Ojster server host. Only the Ojster se
 **Contributing**
 
 - Open issues for bugs or feature requests.
-- Ensure `./test.sh` passes.
+- Ensure `./tools/test` passes.
 - Keep changes small and security-aware.
 - No third-party runtime dependencies will be accepted.
 
 **Testing**
 
 ```sh
-export BUILDKIT_PROGRESS=plain
-docker bake test # logs in ./log/test.log
+./tools/test
 ```
 
 **License**

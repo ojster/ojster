@@ -11,18 +11,17 @@ ENV CGO_ENABLED=0 GOOS=linux GOARCH=arm64 HOME=/app
 USER $UID:$GID
 WORKDIR /app
 
-COPY ojster.go .
+COPY go.mod .
+COPY cmd/ cmd/
+COPY internal/ internal/
 
 # Compute version with .git and version.sh mounted
 RUN --network=none --mount=type=bind,source=.git,target=/app/.git \
-    --mount=type=bind,source=version.sh,target=/app/version.sh <<EOF
+    --mount=type=bind,source=tools/version,target=/app/version <<EOF
     set -o pipefail
     git config --global --add safe.directory /app
-    ./version.sh | tee vers
+    ./version | tee vers
 EOF
-
-# Create a module
-RUN --network=none go mod init ojster
 
 # ============================================
 # 2. Dedicated test stage (skipped by default)
@@ -33,9 +32,6 @@ FROM builder AS test
 COPY --from=dotenv/dotenvx  \
     /usr/local/bin/dotenvx /usr/local/bin/dotenvx
 
-# Add the tests
-COPY ojster_test.go .
-
 WORKDIR /tmp2
 WORKDIR /app
 
@@ -43,10 +39,12 @@ WORKDIR /app
 RUN --network=none --mount=type=tmpfs,target=/tmp <<EOF
     set -o pipefail
     mkdir output
-    go test ./... -v -coverprofile=output/coverage.out \
+    go test $(go list ./... | grep -v internal/testutil | grep -v cmd/ojster) \
+        -v -coverprofile=output/coverage.out \
         -ldflags="-X main.version=$(cat vers)" \
         | tee output/test.log
     go tool cover -html=output/coverage.out -o output/coverage.html
+    go tool cover -func output/coverage.out -o output/coverage.txt
     rm output/coverage.out
 EOF
 
@@ -64,7 +62,7 @@ FROM builder AS binary
 # Build with injected version
 RUN --network=none go build \
     -ldflags="-s -w -extldflags '-static' -X main.version=$(cat vers)" \
-    -o ojster .
+    -o ojster ./cmd/ojster
 
 # ============================================
 # 5. Output ojster binary only (default)

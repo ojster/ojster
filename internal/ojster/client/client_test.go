@@ -1,0 +1,359 @@
+// Copyright 2026 Jip de Beer (Jip-Hop) and ojster contributers
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package client
+
+import (
+	"fmt"
+	"io"
+	"maps"
+	"net"
+	"net/http"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/ojster/ojster/internal/testutil"
+)
+
+//
+// ─────────────────────────────────────────────────────────────
+//   TEST HELPERS
+// ─────────────────────────────────────────────────────────────
+//
+
+func stubExec(t *testing.T) (*string, *[]string, *[]string) {
+	t.Helper()
+	var execPath string
+	var execArgv []string
+	var execEnv []string
+
+	old := execFunc
+	execFunc = func(path string, argv []string, envv []string) error {
+		execPath = path
+		execArgv = append([]string{}, argv...)
+		execEnv = append([]string{}, envv...)
+		return nil
+	}
+	t.Cleanup(func() { execFunc = old })
+	return &execPath, &execArgv, &execEnv
+}
+
+func stubSleep(t *testing.T) {
+	t.Helper()
+	old := sleepFunc
+	sleepFunc = func(time.Duration) {}
+	t.Cleanup(func() { sleepFunc = old })
+}
+
+func stubPost(t *testing.T) {
+	t.Helper()
+	old := postMapToServerJSONFunc
+	postMapToServerJSONFunc = func(socketPath string, m map[string]string) ([]byte, int, error) {
+		return nil, 0, fmt.Errorf("stubbed")
+	}
+	t.Cleanup(func() { postMapToServerJSONFunc = old })
+}
+
+func startUnixHTTPServer(t *testing.T, handler http.Handler) (socketPath string, closeFunc func()) {
+	t.Helper()
+	socketPath = filepath.Join(t.TempDir(), "ojster.sock")
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("failed to listen on unix socket: %v", err)
+	}
+
+	srv := &http.Server{Handler: handler}
+
+	go func() {
+		_ = srv.Serve(ln)
+	}()
+
+	closeFunc = func() {
+		_ = srv.Close()
+		_ = ln.Close()
+	}
+	return socketPath, closeFunc
+}
+
+//
+// ─────────────────────────────────────────────────────────────
+//   getValueRegex / filterEnvByValue
+// ─────────────────────────────────────────────────────────────
+//
+
+func TestGetValueRegex_InvalidRegex(t *testing.T) {
+
+	code := testutil.StubExit(t, &exitFunc)
+
+	t.Setenv("OJSTER_REGEX", "(")
+
+	defer testutil.ExpectExitPanic(t, code, 2)
+
+	getValueRegex()
+}
+
+func TestFilterEnvByValue(t *testing.T) {
+	t.Run("default_regex", func(t *testing.T) {
+		t.Setenv("OJSTER_REGEX", "")
+
+		env := []string{
+			"GOOD=encrypted:ABC123",
+			"WRAPPED='encrypted:XYZ'",
+			"BAD=plain",
+			"INVALID-NAME=encrypted:ABC",
+		}
+
+		out := filterEnvByValue(env)
+
+		if _, ok := out["GOOD"]; !ok {
+			t.Fatalf("expected GOOD")
+		}
+		if _, ok := out["WRAPPED"]; !ok {
+			t.Fatalf("expected WRAPPED")
+		}
+		if _, ok := out["BAD"]; ok {
+			t.Fatalf("did not expect BAD")
+		}
+		if _, ok := out["INVALID-NAME"]; ok {
+			t.Fatalf("did not expect INVALID-NAME")
+		}
+	})
+
+	t.Run("custom_regex", func(t *testing.T) {
+		t.Setenv("OJSTER_REGEX", "^foo")
+
+		env := []string{"A=foo123", "B=bar"}
+		out := filterEnvByValue(env)
+
+		if _, ok := out["A"]; !ok {
+			t.Fatalf("expected A")
+		}
+		if _, ok := out["B"]; ok {
+			t.Fatalf("did not expect B")
+		}
+	})
+}
+
+//
+// ─────────────────────────────────────────────────────────────
+//   buildExecEnv
+// ─────────────────────────────────────────────────────────────
+//
+
+func TestBuildExecEnv(t *testing.T) {
+	origEnviron := environFunc
+	t.Cleanup(func() { environFunc = origEnviron })
+
+	environFunc = func() []string {
+		return []string{
+			"A=1",
+			"B=2",
+			"EMPTY=",
+			"D=4",
+			"OJSTER_FOO=1",
+		}
+	}
+
+	overrides := map[string]string{
+		"B":          "22", // allowed override
+		"C":          "3",  // ignored (not in environ)
+		"D":          "",   // allowed override to empty
+		"OJSTER_FOO": "2",  // ignored (OJSTER_ keys cannot be overridden)
+	}
+
+	out := buildExecEnv(overrides)
+	got := testutil.EnvSliceToMap(out)
+
+	want := map[string]string{
+		"A":     "1",
+		"B":     "22",
+		"EMPTY": "",
+		"D":     "",
+	}
+
+	if !maps.Equal(got, want) {
+		t.Fatalf("mismatch\nwant=%v\ngot=%v", want, got)
+	}
+}
+
+//
+// ─────────────────────────────────────────────────────────────
+//   run()
+// ─────────────────────────────────────────────────────────────
+//
+
+func TestRun_BasicFlow(t *testing.T) {
+	execPath, execArgv, execEnv := stubExec(t)
+
+	oldPost := postMapToServerJSONFunc
+	t.Cleanup(func() { postMapToServerJSONFunc = oldPost })
+
+	postMapToServerJSONFunc = func(socketPath string, m map[string]string) ([]byte, int, error) {
+		if len(m) != 1 || m["SECRET"] != "encrypted:ABC" {
+			t.Fatalf("unexpected request map: %#v", m)
+		}
+		return []byte(`{"SECRET":"decrypted"}`), 200, nil
+	}
+
+	t.Setenv("SECRET", "encrypted:ABC")
+	t.Setenv("PLAIN", "hello")
+
+	Run([]string{"echo", "hello"})
+
+	if !strings.HasSuffix(*execPath, "echo") {
+		t.Fatalf("expected exec path to end with echo, got %s", *execPath)
+	}
+	if len(*execArgv) != 2 || (*execArgv)[0] != "echo" || (*execArgv)[1] != "hello" {
+		t.Fatalf("unexpected argv: %#v", *execArgv)
+	}
+
+	envMap := testutil.EnvSliceToMap(*execEnv)
+	if envMap["SECRET"] != "decrypted" {
+		t.Fatalf("expected SECRET=decrypted, got %v", envMap["SECRET"])
+	}
+}
+
+//
+// ─────────────────────────────────────────────────────────────
+//   run() ERROR PATHS (exit stubbing)
+// ─────────────────────────────────────────────────────────────
+//
+
+func TestRun_RetryScenarios(t *testing.T) {
+	cases := []struct {
+		name      string
+		responses [][]byte
+		statuses  []int
+		wantCalls int
+	}{
+		{
+			name: "server_errors_then_success",
+			responses: [][]byte{
+				[]byte("err"),
+				[]byte("err"),
+				[]byte(`{"SECRET":"ok"}`),
+			},
+			statuses:  []int{500, 500, 200},
+			wantCalls: 3,
+		},
+		{
+			name: "malformed_json_then_success",
+			responses: [][]byte{
+				[]byte("{bad"),
+				[]byte("{bad"),
+				[]byte(`{"SECRET":"ok"}`),
+			},
+			statuses:  []int{200, 200, 200},
+			wantCalls: 3,
+		},
+		{
+			name: "unexpected_keys_then_success",
+			responses: [][]byte{
+				[]byte(`{"SECRET":"x","BAD":"y"}`),
+				[]byte(`{"SECRET":"ok"}`),
+			},
+			statuses:  []int{200, 200},
+			wantCalls: 2,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, _ = stubExec(t)
+			stubSleep(t)
+
+			oldPost := postMapToServerJSONFunc
+			t.Cleanup(func() { postMapToServerJSONFunc = oldPost })
+
+			call := 0
+			postMapToServerJSONFunc = func(socketPath string, m map[string]string) ([]byte, int, error) {
+				resp := tc.responses[call]
+				code := tc.statuses[call]
+				call++
+				return resp, code, nil
+			}
+
+			t.Setenv("SECRET", "encrypted:ABC")
+
+			Run([]string{"echo"})
+
+			if call != tc.wantCalls {
+				t.Fatalf("expected %d calls, got %d", tc.wantCalls, call)
+			}
+		})
+	}
+}
+
+func TestRun_Error_NoNextBinary(t *testing.T) {
+	code := testutil.StubExit(t, &exitFunc)
+
+	stubPost(t)
+	t.Setenv("SECRET", "") // ensure no encrypted vars
+	defer testutil.ExpectExitPanic(t, code, 2)
+	Run([]string{})
+}
+
+func TestRun_Error_NoMatchingEnv(t *testing.T) {
+	code := testutil.StubExit(t, &exitFunc)
+
+	stubPost(t)
+	t.Setenv("PLAIN", "hello")
+	t.Setenv("SECRET", "") // ensure no encrypted vars
+	defer testutil.ExpectExitPanic(t, code, 2)
+	Run([]string{"echo"})
+}
+
+func TestRun_Error_ExecNotFound(t *testing.T) {
+	code := testutil.StubExit(t, &exitFunc)
+
+	// POST succeeds
+	postMapToServerJSONFunc = func(url string, m map[string]string) ([]byte, int, error) {
+		return []byte(`{"SECRET":"ok"}`), 200, nil
+	}
+
+	t.Setenv("SECRET", "encrypted:ABC")
+	defer testutil.ExpectExitPanic(t, code, 2)
+	Run([]string{"does-not-exist"})
+}
+
+//
+// ─────────────────────────────────────────────────────────────
+//   postMapToServerJSON
+// ─────────────────────────────────────────────────────────────
+//
+
+func TestPostMapToServerJSON(t *testing.T) {
+	socketPath, closeSrv := startUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		m := testutil.DecodeJSON[map[string]string](t, body)
+		if m["A"] != "1" {
+			t.Fatalf("expected A=1")
+		}
+		w.Write([]byte(`{"OK":"yes"}`))
+	}))
+	defer closeSrv()
+
+	respBody, status, err := postMapToServerJSON(socketPath, map[string]string{"A": "1"})
+	if err != nil {
+		t.Fatalf("postMapToServerJSON error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected 200")
+	}
+	if string(respBody) != `{"OK":"yes"}` {
+		t.Fatalf("unexpected body: %s", string(respBody))
+	}
+}
