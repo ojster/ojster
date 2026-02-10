@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package client
+package run
 
 import (
 	"bytes"
@@ -32,6 +32,7 @@ import (
 
 	"github.com/ojster/ojster/internal/common"
 	"github.com/ojster/ojster/internal/util"
+	"github.com/ojster/ojster/internal/util/file"
 )
 
 const defaultValueRegex = `^'?(encrypted:[A-Za-z0-9+/=]+)'?$`
@@ -53,7 +54,7 @@ func Run(nextArgs []string) {
 
 	log.Println("ojster run")
 
-	socketPath := util.GetSocketPath()
+	socketPath := file.GetSocketPath()
 
 	allEnv := environFunc()
 	requestMap := filterEnvByValue(allEnv)

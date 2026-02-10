@@ -22,8 +22,11 @@ import (
 	"path/filepath"
 
 	"github.com/ojster/ojster/internal/cli"
-	"github.com/ojster/ojster/internal/ojster/client"
-	"github.com/ojster/ojster/internal/ojster/server"
+	"github.com/ojster/ojster/internal/commands/keypair"
+	"github.com/ojster/ojster/internal/commands/run"
+	"github.com/ojster/ojster/internal/commands/seal"
+	"github.com/ojster/ojster/internal/commands/serve"
+	"github.com/ojster/ojster/internal/commands/unseal"
 )
 
 const header = `Ojster - GitOps-safe one-way encrypted secrets for Docker Compose
@@ -75,10 +78,16 @@ func main() {
 		printHelpAndExit()
 	case "version":
 		fmt.Println(version)
+	case "keypair":
+		keypair.Keypair(subargs)
 	case "run":
-		client.Run(subargs)
+		run.Run(subargs)
+	case "seal":
+		seal.Seal(subargs)
 	case "serve":
-		server.Serve(context.Background(), subargs)
+		serve.Serve(context.Background(), subargs)
+	case "unseal":
+		unseal.Unseal(subargs)
 	}
 }
 

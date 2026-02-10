@@ -12,16 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package util
+package serve
 
 import (
-	"os"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"time"
 )
 
-func GetSocketPath() string {
-	p := os.Getenv("OJSTER_SOCKET_PATH")
-	if p == "" {
-		return "/mnt/ojster/ipc.sock"
+var startTime = time.Now()
+
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	uptime := time.Since(startTime).Seconds()
+	resp := map[string]any{
+		"status": "ok",
+		"time":   time.Now().UTC().Format(time.RFC3339),
+		"uptime": fmt.Sprintf("%.0f", uptime),
 	}
-	return p
+
+	j, _ := json.Marshal(resp)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(j)
 }

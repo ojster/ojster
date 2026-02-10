@@ -12,27 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package serve
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 )
 
-var startTime = time.Now()
-
-func healthHandler(w http.ResponseWriter, r *http.Request) {
-	uptime := time.Since(startTime).Seconds()
-	resp := map[string]any{
-		"status": "ok",
-		"time":   time.Now().UTC().Format(time.RFC3339),
-		"uptime": fmt.Sprintf("%.0f", uptime),
-	}
-
-	j, _ := json.Marshal(resp)
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(j)
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		next.ServeHTTP(w, r)
+		fmt.Fprintf(os.Stderr, "%s %s %s\n", r.Method, r.URL.Path, time.Since(start))
+	})
 }

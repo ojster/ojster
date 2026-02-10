@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package serve
 
 import (
 	"context"
@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/ojster/ojster/internal/util"
+	"github.com/ojster/ojster/internal/util/file"
 )
 
 const linuxTmpfsMagic = 0x01021994
@@ -54,7 +55,7 @@ func Serve(ctx context.Context, cmdArgs []string) {
 		exitFunc(1)
 	}
 
-	socketPath := util.GetSocketPath()
+	socketPath := file.GetSocketPath()
 
 	privateKeyFile := os.Getenv("OJSTER_PRIVATE_KEY_FILE")
 	if privateKeyFile == "" {

@@ -29,10 +29,16 @@ func Dispatch(prog string, args []string) (mode string, subargs []string) {
 		return "help", nil
 	case "version":
 		return "version", nil
+	case "keypair":
+		return "keypair", normalizeArgsForSubcommand(args[1:])
 	case "run":
 		return "run", normalizeArgsForSubcommand(args[1:])
+	case "seal":
+		return "seal", normalizeArgsForSubcommand(args[1:])
 	case "serve":
 		return "serve", normalizeArgsForSubcommand(args[1:])
+	case "unseal":
+		return "unseal", normalizeArgsForSubcommand(args[1:])
 	default:
 		return "help", nil
 	}

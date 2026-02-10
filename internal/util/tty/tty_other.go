@@ -12,19 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+//go:build !linux
+
+package tty
 
 import (
-	"fmt"
-	"net/http"
+	"io"
 	"os"
-	"time"
 )
 
-func loggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		next.ServeHTTP(w, r)
-		fmt.Fprintf(os.Stderr, "%s %s %s\n", r.Method, r.URL.Path, time.Since(start))
-	})
+// On macOS or Windows: no masking, just read normally.
+func ReadSecretFromStdin(prompt string) ([]byte, error) {
+	return io.ReadAll(os.Stdin)
 }
