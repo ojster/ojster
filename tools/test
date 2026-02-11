@@ -150,21 +150,16 @@ if ! grep -q "=encrypted:" .env; then
 fi
 
 # ----------------------------------------
-# COMPOSE UP
+# COMPOSE UP AND VERIFY CLIENT LOGS
 # ----------------------------------------
 echo -e "${YELLOW}${BOLD}→ Starting docker compose…${RESET}"
-docker compose up -d --force-recreate
-
-# ----------------------------------------
-# VERIFY CLIENT LOGS
-# ----------------------------------------
-echo -e "${YELLOW}${BOLD}→ Waiting for client container to finish…${RESET}"
-docker logs -f ojster_example_client >/dev/null 2>&1 || true
+output="$(docker compose up --force-recreate --attach client 2>&1)"
 
 echo -e "${YELLOW}${BOLD}→ Checking client logs for decrypted EXAMPLE1=1234…${RESET}"
-if ! docker logs ojster_example_client 2>&1 | grep -q "EXAMPLE1=1234"; then
+
+if ! grep -q "EXAMPLE1=1234" <<<"$output"; then
     echo -e "${RED}${BOLD}→ Full client logs:${RESET}"
-    docker logs ojster_example_client
+    echo "$output"
     echo -e "${RED}${BOLD}ERROR:${RESET} client logs do not contain EXAMPLE1=1234"
     exit 1
 fi
