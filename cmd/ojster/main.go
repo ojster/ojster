@@ -15,17 +15,11 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 
 	"github.com/ojster/ojster/internal/cli"
-	"github.com/ojster/ojster/internal/client"
-	"github.com/ojster/ojster/internal/pqc"
-	"github.com/ojster/ojster/internal/server"
 )
 
 const header = `Ojster - GitOps-safe one-way encrypted secrets for Docker Compose
@@ -65,52 +59,19 @@ Usage:
 var version = "0.0.0"
 
 func main() {
-	log.SetFlags(0)
-
 	prog := filepath.Base(os.Args[0])
 	args := os.Args[1:]
 
-	mode, subargs := cli.Dispatch(prog, args)
+	stdout, stderr, code := cli.Entrypoint(prog, args, version, header)
 
-	var out string
-	var err error
-
-	switch mode {
-	case "help":
-		fmt.Print(header)
-		os.Exit(0)
-	case "version":
-		fmt.Println(version)
-		return
-	case "keypair":
-		out, err = cli.RunKeypairFromArgs(subargs)
-	case "run":
-		client.Run(subargs)
-		return
-	case "seal":
-		out, err = cli.RunSealFromArgs(subargs)
-	case "serve":
-		server.Serve(context.Background(), subargs)
-		return
-	case "unseal":
-		out, err = cli.RunUnsealFromArgs(subargs)
-	default:
-		fmt.Print(header)
-		os.Exit(1)
+	if stdout != "" {
+		fmt.Print(stdout)
+	}
+	if stderr != "" {
+		// print error message once
+		fmt.Fprintln(os.Stderr, stderr)
 	}
 
-	if out != "" {
-		fmt.Print(out)
-	}
-
-	if err != nil {
-		code := 1 // default exit code
-		var ee pqc.ExitError
-		if errors.As(err, &ee) {
-			code = ee.Code
-		}
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(code)
-	}
-
+	// Ensure we exit with the code returned by Entrypoint.
+	os.Exit(code)
 }
