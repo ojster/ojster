@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -71,38 +72,45 @@ func main() {
 
 	mode, subargs := cli.Dispatch(prog, args)
 
+	var out string
 	var err error
+
 	switch mode {
 	case "help":
-		printHelpAndExit()
+		fmt.Print(header)
+		os.Exit(0)
 	case "version":
 		fmt.Println(version)
+		return
 	case "keypair":
-		err = pqc.Keypair(subargs)
+		out, err = cli.RunKeypairFromArgs(subargs)
 	case "run":
-		// err = client.Run(subargs)
 		client.Run(subargs)
+		return
 	case "seal":
-		err = pqc.Seal(subargs)
+		out, err = cli.RunSealFromArgs(subargs)
 	case "serve":
-		// err = server.Serve(context.Background(), subargs)
 		server.Serve(context.Background(), subargs)
+		return
 	case "unseal":
-		err = pqc.Unseal(subargs)
+		out, err = cli.RunUnsealFromArgs(subargs)
 	default:
-		printHelpAndExit()
+		fmt.Print(header)
+		os.Exit(1)
+	}
+
+	if out != "" {
+		fmt.Print(out)
 	}
 
 	if err != nil {
-		// If it's an ExitError from pqc, use its code
-		if ee, ok := err.(pqc.ExitError); ok {
-			log.Printf("error: %v", ee.Err)
-			os.Exit(ee.Code)
+		code := 1 // default exit code
+		var ee pqc.ExitError
+		if errors.As(err, &ee) {
+			code = ee.Code
 		}
-		// non-ExitError -> generic failure
-		log.Printf("error: %v", err)
-		os.Exit(1)
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(code)
 	}
-}
 
-func printHelpAndExit() { fmt.Print(header); os.Exit(0) }
+}

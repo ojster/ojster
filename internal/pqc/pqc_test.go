@@ -18,118 +18,75 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// captureOutput runs f while capturing stdout and stderr and returns the combined output.
-func captureOutput(t *testing.T, f func()) string {
-	t.Helper()
-	origOut := os.Stdout
-	origErr := os.Stderr
-	rOut, wOut, err := os.Pipe()
+// TestKeypair_Success verifies KeypairWithPaths writes files with correct modes
+// and returns the expected printable output string.
+func TestKeypair_Success(t *testing.T) {
+	td := t.TempDir()
+	priv := filepath.Join(td, "priv.b64")
+	pub := filepath.Join(td, "pub.b64")
+
+	out, err := KeypairWithPaths(priv, pub)
 	if err != nil {
-		t.Fatalf("pipe stdout: %v", err)
+		t.Fatalf("KeypairWithPaths returned error: %v", err)
 	}
-	rErr, wErr, err := os.Pipe()
+
+	// Check private key file exists and has mode 0600
+	st, err := os.Stat(priv)
 	if err != nil {
-		_ = rOut.Close()
-		_ = wOut.Close()
-		t.Fatalf("pipe stderr: %v", err)
+		t.Fatalf("private key file missing: %v", err)
 	}
-	os.Stdout = wOut
-	os.Stderr = wErr
+	if st.Mode().Perm() != 0o600 {
+		t.Fatalf("private key file mode: want 0600 got %o", st.Mode().Perm())
+	}
 
-	done := make(chan string)
-	go func() {
-		var buf bytes.Buffer
-		_, _ = io.Copy(&buf, rOut)
-		_, _ = io.Copy(&buf, rErr)
-		done <- buf.String()
-	}()
+	// Check public key file exists and has mode 0644
+	st2, err := os.Stat(pub)
+	if err != nil {
+		t.Fatalf("public key file missing: %v", err)
+	}
+	if st2.Mode().Perm() != 0o644 {
+		t.Fatalf("public key file mode: want 0644 got %o", st2.Mode().Perm())
+	}
 
-	f()
+	// Read and base64-decode both files
+	privB, err := os.ReadFile(priv)
+	if err != nil {
+		t.Fatalf("read priv: %v", err)
+	}
+	pubB, err := os.ReadFile(pub)
+	if err != nil {
+		t.Fatalf("read pub: %v", err)
+	}
 
-	// close writers to let goroutine finish
-	_ = wOut.Close()
-	_ = wErr.Close()
-	out := <-done
+	privStr := strings.TrimSpace(string(privB))
+	pubStr := strings.TrimSpace(string(pubB))
 
-	// restore
-	_ = rOut.Close()
-	_ = rErr.Close()
-	os.Stdout = origOut
-	os.Stderr = origErr
-	return out
+	if _, err := base64.StdEncoding.DecodeString(privStr); err != nil {
+		t.Fatalf("private key not valid base64: %v", err)
+	}
+	if _, err := base64.StdEncoding.DecodeString(pubStr); err != nil {
+		t.Fatalf("public key not valid base64: %v", err)
+	}
+
+	// Output should mention written files and include the public key base64
+	if !strings.Contains(out, "Wrote private key to") {
+		t.Fatalf("expected output to mention private key path; got: %q", out)
+	}
+	if !strings.Contains(out, "Wrote public key to") {
+		t.Fatalf("expected output to mention public key path; got: %q", out)
+	}
+	if !strings.Contains(out, strings.TrimSpace(pubStr)) {
+		t.Fatalf("expected output to include public key base64; got: %q", out)
+	}
 }
 
-func TestKeypair_SuccessAndPublicWriteFailure(t *testing.T) {
-	t.Run("success_writes_files_and_prints", func(t *testing.T) {
-		td := t.TempDir()
-		priv := filepath.Join(td, "priv.b64")
-		pub := filepath.Join(td, "pub.b64")
-
-		out := captureOutput(t, func() {
-			if err := Keypair([]string{"-priv-file", priv, "-pub-file", pub}); err != nil {
-				t.Fatalf("Keypair returned error: %v", err)
-			}
-		})
-
-		// Check private key file exists and has mode 0600
-		st, err := os.Stat(priv)
-		if err != nil {
-			t.Fatalf("private key file missing: %v", err)
-		}
-		if st.Mode().Perm() != 0o600 {
-			t.Fatalf("private key file mode: want 0600 got %o", st.Mode().Perm())
-		}
-
-		// Check public key file exists and has mode 0644
-		st2, err := os.Stat(pub)
-		if err != nil {
-			t.Fatalf("public key file missing: %v", err)
-		}
-		if st2.Mode().Perm() != 0o644 {
-			t.Fatalf("public key file mode: want 0644 got %o", st2.Mode().Perm())
-		}
-
-		// Read and base64-decode both files
-		privB, err := os.ReadFile(priv)
-		if err != nil {
-			t.Fatalf("read priv: %v", err)
-		}
-		pubB, err := os.ReadFile(pub)
-		if err != nil {
-			t.Fatalf("read pub: %v", err)
-		}
-
-		privStr := strings.TrimSpace(string(privB))
-		pubStr := strings.TrimSpace(string(pubB))
-
-		if _, err := base64.StdEncoding.DecodeString(privStr); err != nil {
-			t.Fatalf("private key not valid base64: %v", err)
-		}
-		if _, err := base64.StdEncoding.DecodeString(pubStr); err != nil {
-			t.Fatalf("public key not valid base64: %v", err)
-		}
-
-		// Keypair prints success messages in the current implementation; ensure output contains them.
-		if !strings.Contains(out, "Wrote private key to") {
-			t.Fatalf("expected stdout to mention private key path; got: %q", out)
-		}
-		if !strings.Contains(out, "Wrote public key to") {
-			t.Fatalf("expected stdout to mention public key path; got: %q", out)
-		}
-		if !strings.Contains(out, strings.TrimSpace(pubStr)) {
-			t.Fatalf("expected stdout to include public key base64; got: %q", out)
-		}
-	})
-}
-
-// AES
+// AES tests
 
 func genKey32() []byte {
 	k := make([]byte, 32)
@@ -247,7 +204,7 @@ func TestDecrypt_TamperedCiphertext(t *testing.T) {
 	}
 
 	// Tamper with a byte in the ciphertext portion (after nonce)
-	if len(ct) <= 12 {
+	if len(ct) <= nonceSizeGCM {
 		t.Fatalf("ciphertext unexpectedly too short for tamper test")
 	}
 	tampered := make([]byte, len(ct))

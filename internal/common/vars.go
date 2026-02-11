@@ -18,11 +18,3 @@ import "regexp"
 
 // KeyNameRegex matches valid environment variable names.
 var KeyNameRegex = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
-// TODO: make helper method for prefix and sep logic
-const (
-	DefaultPrivFile = "ojster_priv.key"
-	DefaultPubFile  = "ojster_pub.key"
-	Prefix          = "OJSTER-1:"
-	Sep             = ":" // separator between mlkem ciphertext and gcm blob
-)
