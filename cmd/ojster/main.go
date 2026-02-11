@@ -22,11 +22,9 @@ import (
 	"path/filepath"
 
 	"github.com/ojster/ojster/internal/cli"
-	"github.com/ojster/ojster/internal/commands/keypair"
-	"github.com/ojster/ojster/internal/commands/run"
-	"github.com/ojster/ojster/internal/commands/seal"
-	"github.com/ojster/ojster/internal/commands/serve"
-	"github.com/ojster/ojster/internal/commands/unseal"
+	"github.com/ojster/ojster/internal/client"
+	"github.com/ojster/ojster/internal/pqc"
+	"github.com/ojster/ojster/internal/server"
 )
 
 const header = `Ojster - GitOps-safe one-way encrypted secrets for Docker Compose
@@ -73,21 +71,37 @@ func main() {
 
 	mode, subargs := cli.Dispatch(prog, args)
 
+	var err error
 	switch mode {
 	case "help":
 		printHelpAndExit()
 	case "version":
 		fmt.Println(version)
 	case "keypair":
-		keypair.Keypair(subargs)
+		err = pqc.Keypair(subargs)
 	case "run":
-		run.Run(subargs)
+		// err = client.Run(subargs)
+		client.Run(subargs)
 	case "seal":
-		seal.Seal(subargs)
+		err = pqc.Seal(subargs)
 	case "serve":
-		serve.Serve(context.Background(), subargs)
+		// err = server.Serve(context.Background(), subargs)
+		server.Serve(context.Background(), subargs)
 	case "unseal":
-		unseal.Unseal(subargs)
+		err = pqc.Unseal(subargs)
+	default:
+		printHelpAndExit()
+	}
+
+	if err != nil {
+		// If it's an ExitError from pqc, use its code
+		if ee, ok := err.(pqc.ExitError); ok {
+			log.Printf("error: %v", ee.Err)
+			os.Exit(ee.Code)
+		}
+		// non-ExitError -> generic failure
+		log.Printf("error: %v", err)
+		os.Exit(1)
 	}
 }
 

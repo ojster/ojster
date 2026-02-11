@@ -12,10 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package serve
+package server
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -23,18 +22,21 @@ import (
 	"github.com/ojster/ojster/internal/testutil"
 )
 
-func TestHealthHandler_OK(t *testing.T) {
-	req := httptest.NewRequest("GET", "/health", nil)
+func TestLoggingMiddleware(t *testing.T) {
+	called := false
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusTeapot)
+	})
+	mw := loggingMiddleware(h)
+
+	req := httptest.NewRequest("GET", "/x", nil)
 	rec := httptest.NewRecorder()
 
-	healthHandler(rec, req)
-	testutil.ExpectStatus(t, rec, http.StatusOK)
+	mw.ServeHTTP(rec, req)
 
-	var m map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
-		t.Fatalf("invalid JSON")
+	if !called {
+		t.Fatalf("handler not called")
 	}
-	if m["status"] != "ok" {
-		t.Fatalf("expected status ok")
-	}
+	testutil.ExpectStatus(t, rec, http.StatusTeapot)
 }

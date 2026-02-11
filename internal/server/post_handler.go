@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package serve
+package server
 
 // TODO: use https://pkg.go.dev/runtime/secret to clean up secrets from memory
 

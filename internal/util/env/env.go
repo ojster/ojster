@@ -153,7 +153,7 @@ func UpdateEnvFile(path, key, value string) error {
 // FormatEnvEntry formats key and value according to Docker env rules.
 // If value contains newline, write as single-quoted multiline block unless the value
 // contains single quotes or ends with a newline, in which case use double-quoted escaped form.
-// Otherwise, if value contains spaces or # or quotes, write as double-quoted with escapes.
+// Otherwise, if value contains spaces or # or quotes or control characters, write as double-quoted with escapes.
 // For simplicity, prefer single-quote for literal values without interpolation.
 func FormatEnvEntry(key, value string) string {
 	if strings.Contains(value, "\n") {
@@ -171,8 +171,8 @@ func FormatEnvEntry(key, value string) string {
 		return fmt.Sprintf("%s=", key)
 	}
 
-	// If value contains spaces, #, or quotes, use double quotes and escape
-	if strings.ContainsAny(value, " #\"'\\") {
+	// If value contains spaces, #, quotes, backslash, or control characters like tab/carriage return, use double quotes and escape
+	if strings.ContainsAny(value, " #\"'\\\t\r") {
 		return fmt.Sprintf("%s=\"%s\"", key, escapeDoubleQuoted(value))
 	}
 
@@ -253,6 +253,10 @@ func ParseEnvFile(path string) (map[string]string, error) {
 			foundEnd := false
 			for j < len(lines) {
 				linej := lines[j]
+				// If this line looks like a new key, stop consuming — treat the block as malformed but do not swallow the next key.
+				if keyRe.MatchString(linej) {
+					break
+				}
 				if strings.HasSuffix(linej, "'") {
 					parts = append(parts, strings.TrimSuffix(linej, "'"))
 					foundEnd = true
@@ -263,7 +267,7 @@ func ParseEnvFile(path string) (map[string]string, error) {
 				j++
 			}
 			if !foundEnd {
-				// malformed: take what we have
+				// malformed: take what we have (do not consume the next key line)
 				out[k] = strings.Join(parts, "\n")
 				i = j
 				continue
@@ -322,6 +326,9 @@ func ParseEnvFile(path string) (map[string]string, error) {
 			inner := strings.TrimSpace(trimmed)
 			inner = strings.TrimPrefix(inner, "'")
 			inner = strings.TrimSuffix(inner, "'")
+			// Unescape escaped quotes and backslashes inside single-quoted single-line values
+			inner = strings.ReplaceAll(inner, `\'`, `'`)
+			inner = strings.ReplaceAll(inner, `\\`, `\`)
 			out[k] = inner
 			i++
 			continue
