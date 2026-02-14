@@ -17,9 +17,22 @@ package cli
 import (
 	"bytes"
 	"flag"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// ----------------------------- small utilities for tests -----------------------------
+
+// simple helper to create a temp file path
+func tmpFilePath(t *testing.T, name string) string {
+	t.Helper()
+	td := t.TempDir()
+	return filepath.Join(td, name)
+}
+
+// ----------------------------- existing tests (unchanged) -----------------------------
 
 // TestSplitDoubleDash covers several positions of the "--" separator.
 func TestSplitDoubleDash(t *testing.T) {
@@ -77,14 +90,17 @@ func TestUsageFromFlagSet(t *testing.T) {
 	}
 }
 
+// ----------------------------- Entrypoint basic behavior -----------------------------
+
 // TestEntrypoint_NoArgs prints header and returns 0.
 func TestEntrypoint_NoArgs(t *testing.T) {
 	var out, errb bytes.Buffer
-	code := Entrypoint("ojster", []string{}, "v1.2.3", "HEADER\n", &out, &errb)
+	hdr := "HDR"
+	code := Entrypoint("ojster", []string{}, "v1.2.3", hdr, &out, &errb)
 	if code != 0 {
 		t.Fatalf("Entrypoint returned code %d; want 0", code)
 	}
-	if out.String() != "HEADER\n" {
+	if out.String() != hdr {
 		t.Fatalf("Entrypoint output mismatch; got %q", out.String())
 	}
 	if errb.Len() != 0 {
@@ -95,11 +111,12 @@ func TestEntrypoint_NoArgs(t *testing.T) {
 // TestEntrypoint_Help prints header and returns 0.
 func TestEntrypoint_Help(t *testing.T) {
 	var out, errb bytes.Buffer
-	code := Entrypoint("ojster", []string{"help"}, "v", "HDR\n", &out, &errb)
+	hdr := "HDR"
+	code := Entrypoint("ojster", []string{"help"}, "v", hdr, &out, &errb)
 	if code != 0 {
 		t.Fatalf("Entrypoint(help) returned %d; want 0", code)
 	}
-	if out.String() != "HDR\n" {
+	if out.String() != hdr {
 		t.Fatalf("help output mismatch; got %q", out.String())
 	}
 }
@@ -107,7 +124,8 @@ func TestEntrypoint_Help(t *testing.T) {
 // TestEntrypoint_Version prints version and returns 0.
 func TestEntrypoint_Version(t *testing.T) {
 	var out, errb bytes.Buffer
-	code := Entrypoint("ojster", []string{"version"}, "VER-XYZ", "HDR\n", &out, &errb)
+	hdr := "HDR"
+	code := Entrypoint("ojster", []string{"version"}, "VER-XYZ", hdr, &out, &errb)
 	if code != 0 {
 		t.Fatalf("Entrypoint(version) returned %d; want 0", code)
 	}
@@ -119,17 +137,20 @@ func TestEntrypoint_Version(t *testing.T) {
 // TestEntrypoint_Unknown prints header, writes error and returns 1.
 func TestEntrypoint_Unknown(t *testing.T) {
 	var out, errb bytes.Buffer
-	code := Entrypoint("ojster", []string{"nope"}, "v", "HDR\n", &out, &errb)
+	hdr := "HDR"
+	code := Entrypoint("ojster", []string{"nope"}, "v", hdr, &out, &errb)
 	if code != 1 {
 		t.Fatalf("Entrypoint(unknown) returned %d; want 1", code)
 	}
-	if out.String() != "HDR\n" {
+	if out.String() != hdr {
 		t.Fatalf("expected header on stdout; got %q", out.String())
 	}
 	if !strings.Contains(errb.String(), "unknown subcommand: nope") {
 		t.Fatalf("expected unknown subcommand error; got %q", errb.String())
 	}
 }
+
+// ----------------------------- handler help behavior -----------------------------
 
 // TestHandleKeypair_Help ensures -h triggers usage printing and returns 0 without calling pqc.
 func TestHandleKeypair_Help(t *testing.T) {
@@ -188,5 +209,273 @@ func TestHandleServe_Help(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Usage: ojster serve") {
 		t.Fatalf("expected serve usage; got %q", out.String())
+	}
+}
+
+// ----------------------------- Entrypoint dispatch tests -----------------------------
+
+// TestEntrypoint_SubcommandDispatch verifies Entrypoint dispatches to the correct handlers.
+// For most handlers we use the -h help flag so the handler returns quickly without side effects.
+func TestEntrypoint_SubcommandDispatch(t *testing.T) {
+	hdr := "HDR"
+
+	cases := []struct {
+		name            string
+		prog            string
+		args            []string
+		wantCode        int
+		wantOutContains string // substring expected on stdout (if any)
+		wantErrContains string // substring expected on stderr (if any)
+	}{
+		{
+			name:            "help",
+			prog:            "ojster",
+			args:            []string{"help"},
+			wantCode:        0,
+			wantOutContains: hdr,
+		},
+		{
+			name:            "version",
+			prog:            "ojster",
+			args:            []string{"version"},
+			wantCode:        0,
+			wantOutContains: "v1.2.3", // Entrypoint prints the version string
+		},
+		{
+			name:            "keypair help",
+			prog:            "ojster",
+			args:            []string{"keypair", "-h"},
+			wantCode:        0,
+			wantOutContains: "Usage: ojster keypair",
+		},
+		{
+			name:            "run help",
+			prog:            "ojster",
+			args:            []string{"run", "-h"},
+			wantCode:        0,
+			wantOutContains: "Usage: ojster run",
+		},
+		{
+			name:            "seal help",
+			prog:            "ojster",
+			args:            []string{"seal", "-h"},
+			wantCode:        0,
+			wantOutContains: "Usage: ojster seal",
+		},
+		{
+			name:            "serve help",
+			prog:            "ojster",
+			args:            []string{"serve", "-h"},
+			wantCode:        0,
+			wantOutContains: "Usage: ojster serve",
+		},
+		{
+			name:            "unseal help",
+			prog:            "ojster",
+			args:            []string{"unseal", "-h"},
+			wantCode:        0,
+			wantOutContains: "Usage: ojster unseal",
+		},
+		{
+			name:            "docker-init behaves like run (help)",
+			prog:            "docker-init",
+			args:            []string{"-h"},
+			wantCode:        0,
+			wantOutContains: "Usage: ojster run",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var out, errb bytes.Buffer
+			code := Entrypoint(c.prog, c.args, "v1.2.3", hdr, &out, &errb)
+			if code != c.wantCode {
+				t.Fatalf("Entrypoint(%s %v) returned code %d; want %d; stderr=%q", c.prog, c.args, code, c.wantCode, errb.String())
+			}
+			if c.wantOutContains != "" && !strings.Contains(out.String(), c.wantOutContains) {
+				t.Fatalf("stdout did not contain %q; got stdout=%q stderr=%q", c.wantOutContains, out.String(), errb.String())
+			}
+			if c.wantErrContains != "" && !strings.Contains(errb.String(), c.wantErrContains) {
+				t.Fatalf("stderr did not contain %q; got stderr=%q stdout=%q", c.wantErrContains, errb.String(), out.String())
+			}
+		})
+	}
+}
+
+// ----------------------------- parse-error coverage for subcommands -----------------------------
+
+func TestEntrypoint_SubcommandFlagParseErrors(t *testing.T) {
+	hdr := "HDR"
+
+	cases := []struct {
+		name       string
+		subcommand string
+		args       []string
+		wantCode   int
+		wantSubstr string
+	}{
+		{"keypair parse error", "keypair", []string{"keypair", "--no-such-flag"}, 2, "failed to parse keypair flags"},
+		{"seal parse error", "seal", []string{"seal", "--no-such-flag"}, 2, "failed to parse seal flags"},
+		{"unseal parse error", "unseal", []string{"unseal", "--no-such-flag"}, 2, "failed to parse unseal flags"},
+		{"run parse error", "run", []string{"run", "--no-such-flag"}, 2, "failed to parse run flags"},
+		{"serve parse error", "serve", []string{"serve", "--no-such-flag"}, 2, "failed to parse serve flags"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var out, errb bytes.Buffer
+			// Entrypoint expects args without the program name; pass as-is so subcommand is first arg.
+			code := Entrypoint("ojster", c.args, "v", hdr, &out, &errb)
+			if code != c.wantCode {
+				t.Fatalf("Entrypoint(%v) returned %d; want %d; stderr=%q", c.args, code, c.wantCode, errb.String())
+			}
+			if !strings.Contains(errb.String(), c.wantSubstr) {
+				t.Fatalf("stderr did not contain %q; got: %q", c.wantSubstr, errb.String())
+			}
+		})
+	}
+}
+
+// ----------------------------- delegation coverage for keypair -----------------------------
+
+// TestEntrypoint_Keypair_Delegation ensures Entrypoint delegates to handleKeypair which calls pqc.KeypairWithPaths.
+// This test uses explicit --priv-file and --pub-file flags to avoid writing to default locations.
+func TestEntrypoint_Keypair_Delegation(t *testing.T) {
+	hdr := "HDR"
+
+	priv := tmpFilePath(t, "priv.b64")
+	pub := tmpFilePath(t, "pub.b64")
+
+	var out, errb bytes.Buffer
+	// pass flags to set output paths
+	args := []string{"keypair", "--priv-file", priv, "--pub-file", pub}
+	code := Entrypoint("ojster", args, "v", hdr, &out, &errb)
+	if code != 0 {
+		t.Fatalf("Entrypoint(keypair) returned %d; want 0; stderr=%q", code, errb.String())
+	}
+
+	// private and public files should exist
+	if _, err := os.Stat(priv); err != nil {
+		t.Fatalf("expected private key file %s to exist; stat error: %v; stderr=%q", priv, err, errb.String())
+	}
+	if _, err := os.Stat(pub); err != nil {
+		t.Fatalf("expected public key file %s to exist; stat error: %v; stderr=%q", pub, err, errb.String())
+	}
+
+	// output should include the public key base64 (KeypairWithPaths prints it)
+	pubB64, err := os.ReadFile(pub)
+	if err != nil {
+		t.Fatalf("read pub: %v", err)
+	}
+	if !strings.Contains(out.String(), strings.TrimSpace(string(pubB64))) {
+		t.Fatalf("expected Entrypoint output to include public key base64; got stdout=%q stderr=%q", out.String(), errb.String())
+	}
+}
+
+// ----------------------------- seal/unseal/run delegation smoke checks -----------------------------
+
+// TestEntrypoint_Seal_MissingPositional ensures Entrypoint dispatches to handleSeal and that
+// handleSeal returns the expected error when the required positional KEY is missing.
+func TestEntrypoint_Seal_MissingPositional(t *testing.T) {
+	hdr := "HDR"
+	var out, errb bytes.Buffer
+	code := Entrypoint("ojster", []string{"seal"}, "v", hdr, &out, &errb)
+	if code != 1 {
+		t.Fatalf("Entrypoint(seal missing arg) returned %d; want 1; stdout=%q stderr=%q", code, out.String(), errb.String())
+	}
+	if !strings.Contains(errb.String(), "seal requires exactly one positional argument: KEY") {
+		t.Fatalf("expected seal missing-arg message; got stderr=%q stdout=%q", errb.String(), out.String())
+	}
+}
+
+// TestEntrypoint_Unseal_Delegation ensures Entrypoint delegates to handleUnseal (help path).
+func TestEntrypoint_Unseal_Delegation(t *testing.T) {
+	hdr := "HDR"
+	var out, errb bytes.Buffer
+	code := Entrypoint("ojster", []string{"unseal", "-h"}, "v", hdr, &out, &errb)
+	if code != 0 {
+		t.Fatalf("Entrypoint(unseal -h) returned %d; want 0; stdout=%q stderr=%q", code, out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "Usage: ojster unseal") {
+		t.Fatalf("expected unseal usage; got stdout=%q stderr=%q", out.String(), errb.String())
+	}
+}
+
+// TestHandleSeal_DelegatesToPQC_InvalidPub ensures handleSeal delegates to pqc.SealWithPlaintext.
+// We provide stdin and an invalid pub file so pqc.SealWithPlaintext fails with a predictable message.
+func TestHandleSeal_DelegatesToPQC_InvalidPub(t *testing.T) {
+	td := t.TempDir()
+	pub := filepath.Join(td, "badpub.b64")
+	outPath := filepath.Join(td, "out.env")
+	if err := os.WriteFile(pub, []byte("not-base64!!!\n"), 0o644); err != nil {
+		t.Fatalf("write pub: %v", err)
+	}
+
+	// Create a pipe and write plaintext into the write end so tty.ReadSecretFromStdin can read it.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe failed: %v", err)
+	}
+	_, _ = w.WriteString("plaintext\n")
+	_ = w.Close()
+
+	origStdin := os.Stdin
+	os.Stdin = r
+	defer func() {
+		_ = r.Close()
+		os.Stdin = origStdin
+	}()
+
+	var out, errb bytes.Buffer
+	args := []string{"--pub-file", pub, "--out", outPath, "MYKEY"}
+	code := handleSeal(args, &out, &errb)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit code from handleSeal with invalid pub file; stdout=%q stderr=%q", out.String(), errb.String())
+	}
+	if !strings.Contains(errb.String(), "invalid base64 public key") {
+		t.Fatalf("expected invalid base64 public key error; got stderr=%q stdout=%q", errb.String(), out.String())
+	}
+}
+
+// TestHandleUnseal_DelegatesToPQC_InvalidPriv ensures handleUnseal delegates to pqc.UnsealFromFiles.
+// We create an invalid base64 private key file so UnsealFromFiles fails with a predictable message.
+func TestHandleUnseal_DelegatesToPQC_InvalidPriv(t *testing.T) {
+	td := t.TempDir()
+	priv := filepath.Join(td, "priv.b64")
+	envFile := filepath.Join(td, "env.env")
+
+	// write invalid base64 priv
+	if err := os.WriteFile(priv, []byte("not-base64!!!\n"), 0o600); err != nil {
+		t.Fatalf("write priv: %v", err)
+	}
+	// minimal env file
+	if err := os.WriteFile(envFile, []byte("A=1\n"), 0o600); err != nil {
+		t.Fatalf("write env: %v", err)
+	}
+
+	var out, errb bytes.Buffer
+	args := []string{"--in", envFile, "--priv-file", priv}
+	code := handleUnseal(args, &out, &errb)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit code from handleUnseal with invalid priv file; stdout=%q stderr=%q", out.String(), errb.String())
+	}
+	if !strings.Contains(errb.String(), "invalid base64 private key") {
+		t.Fatalf("expected invalid base64 private key error; got stderr=%q stdout=%q", errb.String(), out.String())
+	}
+}
+
+// TestHandleRun_DelegatesToClient_RunNonexistentCommand ensures handleRun delegates to client.Run.
+// Passing a non-existent command should produce a non-zero exit code (smoke test).
+func TestHandleRun_DelegatesToClient_NonexistentCommand(t *testing.T) {
+	var out, errb bytes.Buffer
+	// use -- to pass positional command args through; choose a command name that almost certainly doesn't exist
+	args := []string{"--", "no-such-command-hopefully-unique-12345"}
+	code := handleRun(args, &out, &errb)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit code from handleRun for nonexistent command; stdout=%q stderr=%q", out.String(), errb.String())
+	}
+	// stderr content is implementation-dependent; assert we got some stderr text
+	if errb.Len() == 0 {
+		t.Fatalf("expected some stderr output from handleRun for nonexistent command; got stdout=%q", out.String())
 	}
 }
