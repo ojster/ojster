@@ -28,7 +28,6 @@ import (
 	"time"
 
 	"github.com/ojster/ojster/internal/common"
-	"github.com/ojster/ojster/internal/util"
 )
 
 // Assign functions to vars so tests can override them
@@ -131,10 +130,10 @@ func handlePost(w http.ResponseWriter, r *http.Request, cmd []string, privateKey
 func readJSON(r io.Reader, maxBytes int64, v any) error {
 	data, err := io.ReadAll(io.LimitReader(r, maxBytes))
 	if err != nil {
-		return util.Errf("failed to read body: %v", err)
+		return fmt.Errorf("failed to read body: %v", err)
 	}
 	if err := json.Unmarshal(data, v); err != nil {
-		return util.Errf("invalid JSON: %v", err)
+		return fmt.Errorf("invalid JSON: %v", err)
 	}
 	return nil
 }

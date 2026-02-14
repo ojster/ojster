@@ -30,7 +30,6 @@ import (
 	"time"
 
 	"github.com/ojster/ojster/internal/common"
-	"github.com/ojster/ojster/internal/util"
 	"github.com/ojster/ojster/internal/util/file"
 )
 
@@ -158,7 +157,7 @@ func filterEnvByValue(env []string) (map[string]string, error) {
 func postMapToServerJSON(socketPath string, m map[string]string) ([]byte, int, error) {
 	j, err := json.Marshal(m)
 	if err != nil {
-		return nil, 0, util.Errf("failed to marshal request JSON: %v", err)
+		return nil, 0, fmt.Errorf("failed to marshal request JSON: %v", err)
 	}
 
 	tr := &http.Transport{
@@ -174,19 +173,19 @@ func postMapToServerJSON(socketPath string, m map[string]string) ([]byte, int, e
 
 	req, err := http.NewRequest("POST", "http://unix/", bytes.NewReader(j))
 	if err != nil {
-		return nil, 0, util.Errf("failed to create request: %v", err)
+		return nil, 0, fmt.Errorf("failed to create request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, 0, util.Errf("request failed: %v", err)
+		return nil, 0, fmt.Errorf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return respBody, resp.StatusCode, util.Errf("failed to read response body: %v", err)
+		return respBody, resp.StatusCode, fmt.Errorf("failed to read response body: %v", err)
 	}
 
 	return respBody, resp.StatusCode, nil

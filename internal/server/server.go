@@ -25,7 +25,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ojster/ojster/internal/util"
 	"github.com/ojster/ojster/internal/util/file"
 )
 
@@ -34,10 +33,10 @@ const linuxTmpfsMagic = 0x01021994
 func checkTempIsTmpfs(path string) error {
 	var stat syscall.Statfs_t
 	if err := syscall.Statfs(path, &stat); err != nil {
-		return util.Errf("failed to statfs %s: %v", path, err)
+		return fmt.Errorf("failed to statfs %s: %v", path, err)
 	}
 	if uint64(stat.Type) != linuxTmpfsMagic {
-		return util.Errf("path %s is not on tmpfs (statfs type 0x%x)", path, uint64(stat.Type))
+		return fmt.Errorf("path %s is not on tmpfs (statfs type 0x%x)", path, uint64(stat.Type))
 	}
 	return nil
 }
@@ -78,13 +77,13 @@ func Serve(ctx context.Context, cmdArgs []string, outw io.Writer, errw io.Writer
 
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
-		fmt.Fprintln(errw, util.Errf("failed to listen on unix socket %s: %v", socketPath, err))
+		fmt.Fprintln(errw, fmt.Errorf("failed to listen on unix socket %s: %v", socketPath, err))
 		return 1
 	}
 
 	// Ensure socket is writable by client processes
 	if err := os.Chmod(socketPath, 0o666); err != nil {
-		fmt.Fprintln(errw, util.Errf("failed to chmod socket %s: %v", socketPath, err))
+		fmt.Fprintln(errw, fmt.Errorf("failed to chmod socket %s: %v", socketPath, err))
 		ln.Close()
 		return 1
 	}
@@ -103,7 +102,7 @@ func Serve(ctx context.Context, cmdArgs []string, outw io.Writer, errw io.Writer
 
 	// Serve blocks until the server is closed.
 	if err := server.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		fmt.Fprintln(errw, util.Errf("server error: %v", err))
+		fmt.Fprintln(errw, fmt.Errorf("server error: %v", err))
 		ln.Close()
 		return 1
 	}
