@@ -305,7 +305,7 @@ func UnsealFromFiles(inPath, privPath string, keys []string, jsonOut bool, outw 
 			return 1
 		}
 		if outw != nil {
-			_, _ = io.WriteString(outw, string(js))
+			_, _ = outw.Write(js)
 		}
 		return 0
 	}
