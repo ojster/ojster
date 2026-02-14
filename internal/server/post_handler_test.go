@@ -16,6 +16,8 @@ package server
 
 import (
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/ojster/ojster/internal/testutil"
@@ -23,15 +25,28 @@ import (
 
 //
 // ─────────────────────────────────────────────────────────────
+//   TEST HELPERS
+// ─────────────────────────────────────────────────────────────
+//
+
+func ExpectBodyContains(t *testing.T, rec *httptest.ResponseRecorder, substr string) {
+	t.Helper()
+	if !strings.Contains(rec.Body.String(), substr) {
+		t.Fatalf("expected body to contain %q, got %q", substr, rec.Body.String())
+	}
+}
+
+func Sh(script string) []string { return []string{"sh", "-c", script} }
+
+//
+// ─────────────────────────────────────────────────────────────
 //   handlePost
 // ─────────────────────────────────────────────────────────────
 //
 
-var sh = testutil.Sh
-
 func TestHandlePost_Success(t *testing.T) {
 	body := []byte(`{"FOO":"bar"}`)
-	cmd := sh(`printf '{"FOO":"ok"}'`)
+	cmd := Sh(`printf '{"FOO":"ok"}'`)
 	rec := runPost(t, body, cmd, "/tmp/key")
 	testutil.ExpectStatus(t, rec, http.StatusOK)
 
@@ -50,11 +65,11 @@ func TestHandlePost_Errors(t *testing.T) {
 		wantCode int
 		wantSub  string
 	}{
-		{"invalid_json", "{bad json", sh(`printf '{}'`), 400, "invalid JSON"},
-		{"invalid_key", `{"BAD-NAME":"v"}`, sh(`printf '{}'`), 400, "invalid key"},
-		{"unexpected_keys", `{"GOOD":"v"}`, sh(`printf '{"GOOD":"1","BAD":"x"}'`), 502, "unexpected keys"},
-		{"subprocess_invalid_json", `{"GOOD":"v"}`, sh(`printf '{bad json'`), 502, "invalid JSON"},
-		{"exit_error", `{"FOO":"bar"}`, sh(`exit 3`), 502, "exit 3"},
+		{"invalid_json", "{bad json", Sh(`printf '{}'`), 400, "invalid JSON"},
+		{"invalid_key", `{"BAD-NAME":"v"}`, Sh(`printf '{}'`), 400, "invalid key"},
+		{"unexpected_keys", `{"GOOD":"v"}`, Sh(`printf '{"GOOD":"1","BAD":"x"}'`), 502, "unexpected keys"},
+		{"subprocess_invalid_json", `{"GOOD":"v"}`, Sh(`printf '{bad json'`), 502, "invalid JSON"},
+		{"exit_error", `{"FOO":"bar"}`, Sh(`exit 3`), 502, "exit 3"},
 		{"generic_error", `{"FOO":"bar"}`, []string{"does-not-exist"}, 500, "failed to run"},
 	}
 
@@ -62,7 +77,7 @@ func TestHandlePost_Errors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := runPost(t, []byte(tc.body), tc.cmd, "/x")
 			testutil.ExpectStatus(t, rec, tc.wantCode)
-			testutil.ExpectBodyContains(t, rec, tc.wantSub)
+			ExpectBodyContains(t, rec, tc.wantSub)
 		})
 	}
 }

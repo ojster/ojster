@@ -35,6 +35,15 @@ import (
 // ─────────────────────────────────────────────────────────────
 //
 
+func EnvSliceToMap(env []string) map[string]string {
+	out := make(map[string]string, len(env))
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		out[k] = v
+	}
+	return out
+}
+
 func stubExec(t *testing.T) (*string, *[]string, *[]string) {
 	t.Helper()
 	var execPath string
@@ -180,7 +189,7 @@ func TestBuildExecEnv(t *testing.T) {
 	}
 
 	out := buildExecEnv(overrides)
-	got := testutil.EnvSliceToMap(out)
+	got := EnvSliceToMap(out)
 
 	want := map[string]string{
 		"A":     "1",
@@ -231,7 +240,7 @@ func TestRun_BasicFlow(t *testing.T) {
 		t.Fatalf("unexpected argv: %#v", *execArgv)
 	}
 
-	envMap := testutil.EnvSliceToMap(*execEnv)
+	envMap := EnvSliceToMap(*execEnv)
 	if envMap["SECRET"] != "decrypted" {
 		t.Fatalf("expected SECRET=decrypted, got %v", envMap["SECRET"])
 	}
