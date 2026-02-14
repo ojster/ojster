@@ -15,7 +15,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -62,15 +61,8 @@ func main() {
 	prog := filepath.Base(os.Args[0])
 	args := os.Args[1:]
 
-	stdout, stderr, code := cli.Entrypoint(prog, args, version, header)
-
-	if stdout != "" {
-		fmt.Print(stdout)
-	}
-	if stderr != "" {
-		// print error message once
-		fmt.Fprintln(os.Stderr, stderr)
-	}
+	// Entrypoint writes directly to the provided writers and returns an exit code.
+	code := cli.Entrypoint(prog, args, version, header, os.Stdout, os.Stderr)
 
 	// Ensure we exit with the code returned by Entrypoint.
 	os.Exit(code)

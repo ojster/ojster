@@ -24,8 +24,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/ojster/ojster/internal/testutil"
 )
 
 //
@@ -95,18 +93,17 @@ func TestCheckTempIsTmpfs(t *testing.T) {
 }
 
 func TestServe_TmpfsFailure_StatfsError(t *testing.T) {
-
-	code := testutil.StubExit(t, &exitFunc)
-
 	t.Setenv("TMPDIR", "/definitely-not-existing")
 
-	out := testutil.CaptureStderr(t, func() {
-		defer testutil.ExpectExitPanic(t, code, 1)
-		Serve(context.Background(), nil)
-	})
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
 
-	if !strings.Contains(out, "failed to statfs") {
-		t.Fatalf("expected statfs failure, got: %s", out)
+	code := Serve(context.Background(), nil, &outBuf, &errBuf)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit code for tmpfs failure")
+	}
+	if !strings.Contains(errBuf.String(), "failed to statfs") {
+		t.Fatalf("expected statfs failure, got: %q", errBuf.String())
 	}
 }
 
@@ -126,10 +123,13 @@ func TestServe_StartupAndHealth(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("OJSTER_PRIVATE_KEY_FILE", filepath.Join(tmp, ".env"))
 
-	done := make(chan struct{})
+	errCh := make(chan int, 1)
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
+
 	go func() {
-		Serve(ctx, nil)
-		close(done)
+		code := Serve(ctx, nil, &outBuf, &errBuf)
+		errCh <- code
 	}()
 
 	waitForServer(t, socketPath)
@@ -145,22 +145,30 @@ func TestServe_StartupAndHealth(t *testing.T) {
 	}
 	resp.Body.Close()
 
+	// cancel and wait for Serve to return
 	cancel()
 
 	select {
-	case <-done:
+	case code := <-errCh:
+		if code != 0 {
+			t.Fatalf("Serve returned non-zero exit code after shutdown: %d stderr=%q", code, errBuf.String())
+		}
 	case <-time.After(1 * time.Second):
 		t.Fatalf("server did not shut down")
 	}
 }
 
 func TestServe_InvalidSocketPath(t *testing.T) {
-	code := testutil.StubExit(t, &exitFunc)
-
 	// point to a directory that cannot be created/listened on
 	t.Setenv("OJSTER_SOCKET_PATH", "/definitely-not-existing-dir/ojster.sock")
-	defer testutil.ExpectExitPanic(t, code, 1)
-	Serve(context.Background(), nil)
+
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
+
+	code := Serve(context.Background(), nil, &outBuf, &errBuf)
+	if code == 0 || !strings.Contains(errBuf.String(), "failed to listen") {
+		t.Fatalf("expected listen failure, got code=%d stderr=%q", code, errBuf.String())
+	}
 }
 
 func getUnixHTTPClient(socketPath string) *http.Client {

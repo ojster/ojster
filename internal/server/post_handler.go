@@ -14,8 +14,6 @@
 
 package server
 
-// TODO: use https://pkg.go.dev/runtime/secret to clean up secrets from memory
-
 import (
 	"bytes"
 	"context"

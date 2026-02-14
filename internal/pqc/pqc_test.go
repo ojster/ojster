@@ -31,10 +31,15 @@ func TestKeypair_Success(t *testing.T) {
 	priv := filepath.Join(td, "priv.b64")
 	pub := filepath.Join(td, "pub.b64")
 
-	out, err := KeypairWithPaths(priv, pub)
-	if err != nil {
-		t.Fatalf("KeypairWithPaths returned error: %v", err)
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
+
+	code := KeypairWithPaths(priv, pub, &outBuf, &errBuf)
+	if code != 0 {
+		t.Fatalf("KeypairWithPaths failed: code=%d stderr=%q", code, errBuf.String())
 	}
+
+	out := outBuf.String()
 
 	// Check private key file exists and has mode 0600
 	st, err := os.Stat(priv)

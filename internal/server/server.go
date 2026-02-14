@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -30,8 +31,6 @@ import (
 
 const linuxTmpfsMagic = 0x01021994
 
-var exitFunc = os.Exit
-
 func checkTempIsTmpfs(path string) error {
 	var stat syscall.Statfs_t
 	if err := syscall.Statfs(path, &stat); err != nil {
@@ -43,16 +42,20 @@ func checkTempIsTmpfs(path string) error {
 	return nil
 }
 
-func Serve(ctx context.Context, cmdArgs []string) {
+// Serve starts the HTTP server and blocks until the server stops or ctx is cancelled.
+// It writes informational and error messages to the provided writers and returns an
+// integer exit code suitable for passing to os.Exit by the caller.
+func Serve(ctx context.Context, cmdArgs []string, outw io.Writer, errw io.Writer) int {
 	defaultCmd := []string{"dotenvx", "get", "-o"}
 	cmd := defaultCmd
 	if len(cmdArgs) > 0 {
 		cmd = cmdArgs
 	}
 
+	// Ensure /tmp is tmpfs (security expectation for ephemeral files)
 	if err := checkTempIsTmpfs(os.TempDir()); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		exitFunc(1)
+		fmt.Fprintln(errw, err)
+		return 1
 	}
 
 	socketPath := file.GetSocketPath()
@@ -63,39 +66,47 @@ func Serve(ctx context.Context, cmdArgs []string) {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", healthHandler)
-	mux.HandleFunc("HEAD /health", healthHandler)
-	mux.HandleFunc("POST /", func(w http.ResponseWriter, r *http.Request) {
+	// health endpoint: accept GET and HEAD
+	mux.HandleFunc("/health", healthHandler)
+	// main POST endpoint
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		handlePost(w, r, cmd, privateKeyFile)
 	})
 
+	// Ensure previous socket removed
 	_ = os.RemoveAll(socketPath)
 
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, util.Errf("failed to listen on unix socket %s: %v", socketPath, err))
-		exitFunc(1)
+		fmt.Fprintln(errw, util.Errf("failed to listen on unix socket %s: %v", socketPath, err))
+		return 1
 	}
 
+	// Ensure socket is writable by client processes
 	if err := os.Chmod(socketPath, 0o666); err != nil {
-		fmt.Fprintln(os.Stderr, util.Errf("failed to chmod socket %s: %v", socketPath, err))
+		fmt.Fprintln(errw, util.Errf("failed to chmod socket %s: %v", socketPath, err))
 		ln.Close()
-		exitFunc(1)
+		return 1
 	}
 
 	server := &http.Server{Handler: loggingMiddleware(mux)}
 
-	fmt.Fprintf(os.Stderr, "ojster serving on unix socket %s\n", socketPath)
+	fmt.Fprintf(errw, "ojster serving on unix socket %s\n", socketPath)
 
+	// Graceful shutdown on context cancellation
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		server.Shutdown(shutdownCtx)
+		_ = server.Shutdown(shutdownCtx)
 	}()
 
+	// Serve blocks until the server is closed.
 	if err := server.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		fmt.Fprintln(os.Stderr, util.Errf("server error: %v", err))
-		exitFunc(1)
+		fmt.Fprintln(errw, util.Errf("server error: %v", err))
+		ln.Close()
+		return 1
 	}
+
+	return 0
 }

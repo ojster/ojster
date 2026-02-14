@@ -1,20 +1,4 @@
-// Copyright 2026 Jip de Beer (Jip-Hop) and ojster contributers
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     https://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package pqc
-
-// TODO: use https://pkg.go.dev/runtime/secret to clean up secrets from memory
 
 import (
 	"crypto/aes"
@@ -42,21 +26,6 @@ const (
 	prefix          = "OJSTER-1:"
 	sep             = ":" // separator between mlkem ciphertext and gcm blob
 )
-
-// ExitError is returned by command functions to indicate the desired exit code.
-// The caller (typically main) is responsible for printing the error message
-// and calling os.Exit with the provided code.
-type ExitError struct {
-	Code int
-	Err  error
-}
-
-func (e ExitError) Error() string {
-	if e.Err == nil {
-		return fmt.Sprintf("exit %d", e.Code)
-	}
-	return e.Err.Error()
-}
 
 func DefaultPrivFile() string { return defaultPrivFile }
 func DefaultPubFile() string  { return defaultPubFile }
@@ -116,19 +85,19 @@ func decryptAESGCM(key, blob []byte) ([]byte, error) {
 }
 
 //
-// Public, testable functions that return printable strings and errors.
-// These functions do NOT call os.Exit or print error messages themselves.
-// The caller (main/cli) should print returned strings and handle ExitError codes.
+// Public, testable functions that write to io.Writer and return an exit code.
+// These functions do NOT call os.Exit. The caller (main/cli) should call os.Exit
+// with the returned code and may print additional context if desired.
 //
 
 // KeypairWithPaths generates a keypair and writes the private and public files.
-// On success it returns a printable string describing the result (caller may print it).
-// On failure it returns an ExitError (with Code) or a plain error.
-func KeypairWithPaths(privPath, pubPath string) (string, error) {
-	// Generate decapsulation (private) key
+// On success it writes a short summary to outw and returns 0.
+// On failure it writes an error message to errw and returns a non-zero exit code.
+func KeypairWithPaths(privPath, pubPath string, outw io.Writer, errw io.Writer) int {
 	dk, err := mlkem.GenerateKey768()
 	if err != nil {
-		return "", ExitError{Code: 1, Err: fmt.Errorf("failed to generate key: %w", err)}
+		fmt.Fprintln(errw, fmt.Errorf("failed to generate key: %w", err))
+		return 1
 	}
 	priv := dk.Bytes() // 64 bytes seed form (private)
 	ek := dk.EncapsulationKey()
@@ -140,48 +109,56 @@ func KeypairWithPaths(privPath, pubPath string) (string, error) {
 
 	// Write private key atomically with 0600 permissions
 	if err := file.WriteFileAtomic(privPath, privB64, 0o600); err != nil {
-		return "", ExitError{Code: 1, Err: fmt.Errorf("failed to write private key: %w", err)}
+		fmt.Fprintln(errw, fmt.Errorf("failed to write private key: %w", err))
+		return 1
 	}
 
 	// Write public key atomically with 0644 permissions
 	if err := file.WriteFileAtomic(pubPath, pubB64Bytes, 0o644); err != nil {
-		// attempt to remove private key if public write fails
 		_ = os.Remove(privPath)
-		return "", ExitError{Code: 1, Err: fmt.Errorf("failed to write public key: %w", err)}
+		fmt.Fprintln(errw, fmt.Errorf("failed to write public key: %w", err))
+		return 1
 	}
 
 	absPriv, _ := filepath.Abs(privPath)
 	absPub, _ := filepath.Abs(pubPath)
 
-	out := fmt.Sprintf(
+	outMsg := fmt.Sprintf(
 		"Wrote private key to %s (mode 0600)\nWrote public key to %s (mode 0644)\n\nPUBLIC (base64):\n%s\n",
 		absPriv, absPub, strings.TrimSpace(string(pubB64Bytes)),
 	)
+
+	if outw != nil {
+		_, _ = io.WriteString(outw, outMsg)
+	}
 
 	// avoid unused var warnings in some build contexts
 	_ = ek
 	_ = pub
 
-	return out, nil
+	return 0
 }
 
 // SealWithPlaintext seals the provided plaintext using the public key file at pubPath,
 // writes the sealed value into outPath under keyName (via env.UpdateEnvFile), and
-// returns a printable success string on success. No printing is performed here.
-func SealWithPlaintext(pubPath, outPath, keyName string, plaintext []byte) (string, error) {
+// writes a short success message to outw. Returns an exit code and writes errors to errw.
+func SealWithPlaintext(pubPath, outPath, keyName string, plaintext []byte, outw io.Writer, errw io.Writer) int {
 	pubBytesRaw, err := os.ReadFile(pubPath)
 	if err != nil {
-		return "", ExitError{Code: 1, Err: fmt.Errorf("failed to read public key file %s: %w", pubPath, err)}
+		fmt.Fprintln(errw, fmt.Errorf("failed to read public key file %s: %w", pubPath, err))
+		return 1
 	}
 
 	pubBytes, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(pubBytesRaw)))
 	if err != nil {
-		return "", ExitError{Code: 1, Err: fmt.Errorf("invalid base64 public key in %s: %w", pubPath, err)}
+		fmt.Fprintln(errw, fmt.Errorf("invalid base64 public key in %s: %w", pubPath, err))
+		return 1
 	}
 
 	ek, err := mlkem.NewEncapsulationKey768(pubBytes)
 	if err != nil {
-		return "", ExitError{Code: 1, Err: fmt.Errorf("invalid public key in %s: %w", pubPath, err)}
+		fmt.Fprintln(errw, fmt.Errorf("invalid public key in %s: %w", pubPath, err))
+		return 1
 	}
 
 	pt := make([]byte, len(plaintext))
@@ -189,12 +166,14 @@ func SealWithPlaintext(pubPath, outPath, keyName string, plaintext []byte) (stri
 
 	sharedKey, mlkemCiphertext := ek.Encapsulate()
 	if len(sharedKey) != mlkem.SharedKeySize {
-		return "", ExitError{Code: 1, Err: fmt.Errorf("unexpected shared key size: %d", len(sharedKey))}
+		fmt.Fprintln(errw, fmt.Errorf("unexpected shared key size: %d", len(sharedKey)))
+		return 1
 	}
 
 	gcmBlob, err := encryptAESGCM(sharedKey, pt)
 	if err != nil {
-		return "", ExitError{Code: 1, Err: fmt.Errorf("encryption failed: %w", err)}
+		fmt.Fprintln(errw, fmt.Errorf("encryption failed: %w", err))
+		return 1
 	}
 
 	mlkemB64 := base64.StdEncoding.EncodeToString(mlkemCiphertext)
@@ -202,37 +181,46 @@ func SealWithPlaintext(pubPath, outPath, keyName string, plaintext []byte) (stri
 	sealed := prefix + mlkemB64 + sep + gcmB64
 
 	if err := env.UpdateEnvFile(outPath, keyName, sealed); err != nil {
-		return "", ExitError{Code: 1, Err: fmt.Errorf("failed to update env file %s: %w", outPath, err)}
+		fmt.Fprintln(errw, fmt.Errorf("failed to update env file %s: %w", outPath, err))
+		return 1
 	}
 
-	out := fmt.Sprintf("Wrote %s to %s\n", keyName, outPath)
-	return out, nil
+	if outw != nil {
+		_, _ = io.WriteString(outw, fmt.Sprintf("Wrote %s to %s\n", keyName, outPath))
+	}
+	_ = ek
+	return 0
 }
 
 // UnsealFromFiles reads the env file at inPath and the private key at privPath,
 // decapsulates and decrypts the requested keys (if keys is empty, all sealed keys).
-// On success it returns either a JSON string (if jsonOut) or newline-separated env entries.
-func UnsealFromFiles(inPath, privPath string, keys []string, jsonOut bool) (string, error) {
+// On success it writes either JSON (if jsonOut) or newline-separated env entries to outw.
+// Returns an exit code and writes errors to errw.
+func UnsealFromFiles(inPath, privPath string, keys []string, jsonOut bool, outw io.Writer, errw io.Writer) int {
 	// Read private key file
 	privFileBytes, err := os.ReadFile(privPath)
 	if err != nil {
-		return "", ExitError{Code: 1, Err: fmt.Errorf("failed to read private key file %s: %w", privPath, err)}
+		fmt.Fprintln(errw, fmt.Errorf("failed to read private key file %s: %w", privPath, err))
+		return 1
 	}
 	privText := strings.TrimSpace(string(privFileBytes))
 	privBytes, err := base64.StdEncoding.DecodeString(privText)
 	if err != nil {
-		return "", ExitError{Code: 1, Err: fmt.Errorf("invalid base64 private key in %s: %w", privPath, err)}
+		fmt.Fprintln(errw, fmt.Errorf("invalid base64 private key in %s: %w", privPath, err))
+		return 1
 	}
 
 	dk, err := mlkem.NewDecapsulationKey768(privBytes)
 	if err != nil {
-		return "", ExitError{Code: 1, Err: fmt.Errorf("invalid private key in %s: %w", privPath, err)}
+		fmt.Fprintln(errw, fmt.Errorf("invalid private key in %s: %w", privPath, err))
+		return 1
 	}
 
 	// Parse env file into map of key->rawValue (logical unquoted value)
 	envMap, err := env.ParseEnvFile(inPath)
 	if err != nil {
-		return "", ExitError{Code: 1, Err: fmt.Errorf("failed to read env file %s: %w", inPath, err)}
+		fmt.Fprintln(errw, fmt.Errorf("failed to read env file %s: %w", inPath, err))
+		return 1
 	}
 
 	// If no keys provided, select all keys whose stored value starts with the sealed prefix
@@ -244,8 +232,8 @@ func UnsealFromFiles(inPath, privPath string, keys []string, jsonOut bool) (stri
 		}
 		sort.Strings(keys)
 		if len(keys) == 0 {
-			// No sealed entries is not an error; return empty output.
-			return "", nil
+			// No sealed entries is not an error; write nothing and return success.
+			return 0
 		}
 	}
 
@@ -257,7 +245,8 @@ func UnsealFromFiles(inPath, privPath string, keys []string, jsonOut bool) (stri
 		}
 	}
 	if len(missing) > 0 {
-		return "", ExitError{Code: 2, Err: fmt.Errorf("missing keys in %s: %s", inPath, strings.Join(missing, ", "))}
+		fmt.Fprintln(errw, fmt.Errorf("missing keys in %s: %s", inPath, strings.Join(missing, ", ")))
+		return 2
 	}
 
 	// Collect decrypted values
@@ -266,36 +255,43 @@ func UnsealFromFiles(inPath, privPath string, keys []string, jsonOut bool) (stri
 	for _, k := range keys {
 		stored := envMap[k]
 		if !strings.HasPrefix(stored, prefix) {
-			return "", ExitError{Code: 1, Err: fmt.Errorf("value for %s does not appear to be sealed (missing prefix)", k)}
+			fmt.Fprintln(errw, fmt.Errorf("value for %s does not appear to be sealed (missing prefix)", k))
+			return 1
 		}
 		payload := strings.TrimPrefix(stored, prefix)
 		parts := strings.SplitN(payload, sep, 2)
 		if len(parts) != 2 {
-			return "", ExitError{Code: 1, Err: fmt.Errorf("sealed value for %s malformed", k)}
+			fmt.Fprintln(errw, fmt.Errorf("sealed value for %s malformed", k))
+			return 1
 		}
 		mlkemB64 := parts[0]
 		gcmB64 := parts[1]
 
 		mlkemCiphertext, err := base64.StdEncoding.DecodeString(mlkemB64)
 		if err != nil {
-			return "", ExitError{Code: 1, Err: fmt.Errorf("invalid base64 mlkem ciphertext for %s: %w", k, err)}
+			fmt.Fprintln(errw, fmt.Errorf("invalid base64 mlkem ciphertext for %s: %w", k, err))
+			return 1
 		}
 		gcmBlob, err := base64.StdEncoding.DecodeString(gcmB64)
 		if err != nil {
-			return "", ExitError{Code: 1, Err: fmt.Errorf("invalid base64 gcm blob for %s: %w", k, err)}
+			fmt.Fprintln(errw, fmt.Errorf("invalid base64 gcm blob for %s: %w", k, err))
+			return 1
 		}
 
 		sharedKey, err := dk.Decapsulate(mlkemCiphertext)
 		if err != nil {
-			return "", ExitError{Code: 1, Err: fmt.Errorf("decapsulation failed for %s: %w", k, err)}
+			fmt.Fprintln(errw, fmt.Errorf("decapsulation failed for %s: %w", k, err))
+			return 1
 		}
 		if len(sharedKey) != mlkem.SharedKeySize {
-			return "", ExitError{Code: 1, Err: fmt.Errorf("unexpected shared key size for %s: %d", k, len(sharedKey))}
+			fmt.Fprintln(errw, fmt.Errorf("unexpected shared key size for %s: %d", k, len(sharedKey)))
+			return 1
 		}
 
 		plaintext, err := decryptAESGCM(sharedKey, gcmBlob)
 		if err != nil {
-			return "", ExitError{Code: 1, Err: fmt.Errorf("decryption failed for %s: %w", k, err)}
+			fmt.Fprintln(errw, fmt.Errorf("decryption failed for %s: %w", k, err))
+			return 1
 		}
 
 		decrypted[k] = string(plaintext)
@@ -305,9 +301,13 @@ func UnsealFromFiles(inPath, privPath string, keys []string, jsonOut bool) (stri
 	if jsonOut {
 		js, err := json.Marshal(decrypted)
 		if err != nil {
-			return "", ExitError{Code: 1, Err: fmt.Errorf("failed to marshal JSON: %w", err)}
+			fmt.Fprintln(errw, fmt.Errorf("failed to marshal JSON: %w", err))
+			return 1
 		}
-		return string(js), nil
+		if outw != nil {
+			_, _ = io.WriteString(outw, string(js))
+		}
+		return 0
 	}
 
 	// .env-safe lines
@@ -316,5 +316,9 @@ func UnsealFromFiles(inPath, privPath string, keys []string, jsonOut bool) (stri
 		b.WriteString(env.FormatEnvEntry(k, decrypted[k]))
 		b.WriteByte('\n')
 	}
-	return strings.TrimRight(b.String(), "\n"), nil
+	result := strings.TrimRight(b.String(), "\n")
+	if outw != nil && result != "" {
+		_, _ = io.WriteString(outw, result)
+	}
+	return 0
 }

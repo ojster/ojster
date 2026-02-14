@@ -1,0 +1,257 @@
+// Copyright 2026 Jip de Beer (Jip-Hop) and ojster contributers
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package pqc
+
+import (
+	"crypto/mlkem"
+	"encoding/base64"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/ojster/ojster/internal/common"
+	"github.com/ojster/ojster/internal/testutil"
+)
+
+//
+// ─────────────────────────────────────────────────────────────
+//   HELPERS
+// ─────────────────────────────────────────────────────────────
+//
+
+func tmp(t *testing.T, name string) string {
+	t.Helper()
+	return filepath.Join(t.TempDir(), name)
+}
+
+func write(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func fakeStdin(t *testing.T, content string) func() {
+	t.Helper()
+	r, w, _ := os.Pipe()
+	_, _ = w.Write([]byte(content))
+	_ = w.Close()
+
+	old := os.Stdin
+	os.Stdin = r
+
+	return func() {
+		os.Stdin = old
+		_ = r.Close()
+	}
+}
+
+// stdin reader that always errors DURING read
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) { return 0, fmt.Errorf("boom") }
+
+//
+// ─────────────────────────────────────────────────────────────
+//   SUCCESS TESTS
+// ─────────────────────────────────────────────────────────────
+//
+
+func TestSeal_WritesEnvEntry(t *testing.T) {
+	pub := tmp(t, "pub.b64")
+	envPath := tmp(t, ".env")
+
+	write(t, pub, base64.StdEncoding.EncodeToString([]byte("fake-pub")))
+
+	// stub crypto
+	origNew := mlkemNewEncap
+	origEncap := mlkemEncapsulate
+	origAES := aesEncrypt
+
+	mlkemNewEncap = func(_ []byte) (*mlkem.EncapsulationKey768, error) { return nil, nil }
+	mlkemEncapsulate = func(_ *mlkem.EncapsulationKey768) ([]byte, []byte) {
+		return make([]byte, mlkem.SharedKeySize), []byte("cipher")
+	}
+	aesEncrypt = func(_ []byte, pt []byte) ([]byte, error) {
+		return []byte("gcm"), nil
+	}
+
+	t.Cleanup(func() {
+		mlkemNewEncap = origNew
+		mlkemEncapsulate = origEncap
+		aesEncrypt = origAES
+	})
+
+	restore := fakeStdin(t, "supersecret\n")
+	defer restore()
+
+	out := testutil.CaptureStderr(t, func() {
+		Seal([]string{"-pub-file", pub, "-out", envPath, "TEST_SECRET"})
+	})
+
+	if !strings.Contains(out, "Wrote TEST_SECRET") {
+		t.Fatalf("expected confirmation, got: %q", out)
+	}
+
+	b, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("read env: %v", err)
+	}
+	content := string(b)
+
+	if !strings.Contains(content, "TEST_SECRET=") {
+		t.Fatalf("missing env entry: %q", content)
+	}
+
+	val := strings.TrimPrefix(strings.TrimSpace(content), "TEST_SECRET=")
+	if !strings.HasPrefix(val, common.Prefix) {
+		t.Fatalf("sealed value missing prefix: %q", val)
+	}
+
+	payload := strings.TrimPrefix(val, common.Prefix)
+	parts := strings.SplitN(payload, common.Sep, 2)
+	if len(parts) != 2 {
+		t.Fatalf("malformed sealed payload: %q", payload)
+	}
+}
+
+//
+// ─────────────────────────────────────────────────────────────
+//   ERROR TESTS
+// ─────────────────────────────────────────────────────────────
+//
+
+func TestSeal_MissingPubFile(t *testing.T) {
+	restore := fakeStdin(t, "secret\n")
+	defer restore()
+
+	code := testutil.StubExit(t, &exitFunc)
+
+	testutil.CaptureStderr(t, func() {
+		defer testutil.ExpectExitPanic(t, code, 1)
+		Seal([]string{"-pub-file", "nope", "-out", "ignored", "KEY"})
+	})
+}
+
+func TestSeal_InvalidBase64Pub(t *testing.T) {
+	pub := tmp(t, "pub")
+	env := tmp(t, ".env")
+
+	write(t, pub, "!!!bad!!!")
+
+	restore := fakeStdin(t, "secret\n")
+	defer restore()
+
+	code := testutil.StubExit(t, &exitFunc)
+
+	testutil.CaptureStderr(t, func() {
+		defer testutil.ExpectExitPanic(t, code, 1)
+		Seal([]string{"-pub-file", pub, "-out", env, "KEY"})
+	})
+}
+
+func TestSeal_InvalidPublicKey(t *testing.T) {
+	pub := tmp(t, "pub")
+	env := tmp(t, ".env")
+
+	write(t, pub, base64.StdEncoding.EncodeToString([]byte("fake")))
+
+	origNew := mlkemNewEncap
+	mlkemNewEncap = func(_ []byte) (*mlkem.EncapsulationKey768, error) {
+		return nil, fmt.Errorf("bad key")
+	}
+	t.Cleanup(func() { mlkemNewEncap = origNew })
+
+	restore := fakeStdin(t, "secret\n")
+	defer restore()
+
+	code := testutil.StubExit(t, &exitFunc)
+
+	testutil.CaptureStderr(t, func() {
+		defer testutil.ExpectExitPanic(t, code, 1)
+		Seal([]string{"-pub-file", pub, "-out", env, "KEY"})
+	})
+}
+
+func TestSeal_AESFailure(t *testing.T) {
+	pub := tmp(t, "pub")
+	env := tmp(t, ".env")
+
+	write(t, pub, base64.StdEncoding.EncodeToString([]byte("fake")))
+
+	origNew := mlkemNewEncap
+	origEncap := mlkemEncapsulate
+	origAES := aesEncrypt
+
+	mlkemNewEncap = func(_ []byte) (*mlkem.EncapsulationKey768, error) { return nil, nil }
+	mlkemEncapsulate = func(_ *mlkem.EncapsulationKey768) ([]byte, []byte) {
+		return make([]byte, mlkem.SharedKeySize), []byte("cipher")
+	}
+	aesEncrypt = func(_ []byte, _ []byte) ([]byte, error) {
+		return nil, fmt.Errorf("gcm fail")
+	}
+
+	t.Cleanup(func() {
+		mlkemNewEncap = origNew
+		mlkemEncapsulate = origEncap
+		aesEncrypt = origAES
+	})
+
+	restore := fakeStdin(t, "secret\n")
+	defer restore()
+
+	code := testutil.StubExit(t, &exitFunc)
+
+	testutil.CaptureStderr(t, func() {
+		defer testutil.ExpectExitPanic(t, code, 1)
+		Seal([]string{"-pub-file", pub, "-out", env, "KEY"})
+	})
+}
+
+func TestSeal_FailedToReadPlaintext(t *testing.T) {
+	pub := tmp(t, "pub.b64")
+	env := tmp(t, ".env")
+
+	write(t, pub, base64.StdEncoding.EncodeToString([]byte("fake-pub")))
+
+	origNew := mlkemNewEncap
+	mlkemNewEncap = func(_ []byte) (*mlkem.EncapsulationKey768, error) {
+		return new(mlkem.EncapsulationKey768), nil
+	}
+	t.Cleanup(func() { mlkemNewEncap = origNew })
+
+	// stdin that errors DURING read
+	r, w, _ := os.Pipe()
+	_ = w.Close() // closed writer → read will error DURING read
+	old := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() {
+		os.Stdin = old
+		_ = r.Close()
+	})
+
+	code := testutil.StubExit(t, &exitFunc)
+
+	out := testutil.CaptureStderr(t, func() {
+		defer testutil.ExpectExitPanic(t, code, 1)
+		Seal([]string{"-pub-file", pub, "-out", env, "KEY"})
+	})
+
+	if !strings.Contains(out, "failed to read plaintext") {
+		t.Fatalf("expected plaintext read error, got: %q", out)
+	}
+}

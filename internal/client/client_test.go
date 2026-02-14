@@ -15,6 +15,7 @@
 package client
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"maps"
@@ -95,14 +96,12 @@ func startUnixHTTPServer(t *testing.T, handler http.Handler) (socketPath string,
 //
 
 func TestGetValueRegex_InvalidRegex(t *testing.T) {
-
-	code := testutil.StubExit(t, &exitFunc)
-
 	t.Setenv("OJSTER_REGEX", "(")
 
-	defer testutil.ExpectExitPanic(t, code, 2)
-
-	getValueRegex()
+	_, err := getValueRegex()
+	if err == nil {
+		t.Fatalf("expected error for invalid regex")
+	}
 }
 
 func TestFilterEnvByValue(t *testing.T) {
@@ -116,7 +115,10 @@ func TestFilterEnvByValue(t *testing.T) {
 			"INVALID-NAME=encrypted:ABC",
 		}
 
-		out := filterEnvByValue(env)
+		out, err := filterEnvByValue(env)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 
 		if _, ok := out["GOOD"]; !ok {
 			t.Fatalf("expected GOOD")
@@ -136,7 +138,10 @@ func TestFilterEnvByValue(t *testing.T) {
 		t.Setenv("OJSTER_REGEX", "^foo")
 
 		env := []string{"A=foo123", "B=bar"}
-		out := filterEnvByValue(env)
+		out, err := filterEnvByValue(env)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 
 		if _, ok := out["A"]; !ok {
 			t.Fatalf("expected A")
@@ -211,7 +216,13 @@ func TestRun_BasicFlow(t *testing.T) {
 	t.Setenv("SECRET", "encrypted:ABC")
 	t.Setenv("PLAIN", "hello")
 
-	Run([]string{"echo", "hello"})
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
+
+	code := Run([]string{"echo", "hello"}, &outBuf, &errBuf)
+	if code != 0 {
+		t.Fatalf("Run returned non-zero exit code: %d stderr=%q", code, errBuf.String())
+	}
 
 	if !strings.HasSuffix(*execPath, "echo") {
 		t.Fatalf("expected exec path to end with echo, got %s", *execPath)
@@ -228,7 +239,7 @@ func TestRun_BasicFlow(t *testing.T) {
 
 //
 // ─────────────────────────────────────────────────────────────
-//   run() ERROR PATHS (exit stubbing)
+//   run() ERROR PATHS
 // ─────────────────────────────────────────────────────────────
 //
 
@@ -288,7 +299,13 @@ func TestRun_RetryScenarios(t *testing.T) {
 
 			t.Setenv("SECRET", "encrypted:ABC")
 
-			Run([]string{"echo"})
+			var outBuf bytes.Buffer
+			var errBuf bytes.Buffer
+
+			code := Run([]string{"echo"}, &outBuf, &errBuf)
+			if code != 0 {
+				t.Fatalf("Run returned non-zero exit code: %d stderr=%q", code, errBuf.String())
+			}
 
 			if call != tc.wantCalls {
 				t.Fatalf("expected %d calls, got %d", tc.wantCalls, call)
@@ -298,35 +315,49 @@ func TestRun_RetryScenarios(t *testing.T) {
 }
 
 func TestRun_Error_NoNextBinary(t *testing.T) {
-	code := testutil.StubExit(t, &exitFunc)
-
 	stubPost(t)
 	t.Setenv("SECRET", "") // ensure no encrypted vars
-	defer testutil.ExpectExitPanic(t, code, 2)
-	Run([]string{})
+
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
+
+	code := Run([]string{}, &outBuf, &errBuf)
+	if code != 2 {
+		t.Fatalf("expected exit code %d for missing next-binary, got %d stderr=%q", 2, code, errBuf.String())
+	}
 }
 
 func TestRun_Error_NoMatchingEnv(t *testing.T) {
-	code := testutil.StubExit(t, &exitFunc)
-
 	stubPost(t)
 	t.Setenv("PLAIN", "hello")
 	t.Setenv("SECRET", "") // ensure no encrypted vars
-	defer testutil.ExpectExitPanic(t, code, 2)
-	Run([]string{"echo"})
+
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
+
+	code := Run([]string{"echo"}, &outBuf, &errBuf)
+	if code != 2 {
+		t.Fatalf("expected exit code %d for no matching env, got %d stderr=%q", 2, code, errBuf.String())
+	}
 }
 
 func TestRun_Error_ExecNotFound(t *testing.T) {
-	code := testutil.StubExit(t, &exitFunc)
-
 	// POST succeeds
+	oldPost := postMapToServerJSONFunc
+	t.Cleanup(func() { postMapToServerJSONFunc = oldPost })
 	postMapToServerJSONFunc = func(url string, m map[string]string) ([]byte, int, error) {
 		return []byte(`{"SECRET":"ok"}`), 200, nil
 	}
 
 	t.Setenv("SECRET", "encrypted:ABC")
-	defer testutil.ExpectExitPanic(t, code, 2)
-	Run([]string{"does-not-exist"})
+
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
+
+	code := Run([]string{"does-not-exist"}, &outBuf, &errBuf)
+	if code != 2 {
+		t.Fatalf("expected exec-not-found exit code %d, got %d stderr=%q", 2, code, errBuf.String())
+	}
 }
 
 //

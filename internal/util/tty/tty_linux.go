@@ -51,7 +51,7 @@ func ReadSecretFromStdin(prompt string) ([]byte, error) {
 }
 
 // readWithTermios disables echo using TCGETS/TCSETS, reads until EOF, restores echo.
-func readWithTermios(f *os.File, out *os.File) ([]byte, error) {
+func readWithTermios(f *os.File, outw *os.File) ([]byte, error) {
 	fd := int(f.Fd())
 
 	// Load current termios
@@ -91,7 +91,7 @@ func readWithTermios(f *os.File, out *os.File) ([]byte, error) {
 			uintptr(unsafe.Pointer(&old)),
 			0, 0, 0,
 		)
-		fmt.Fprintln(out)
+		fmt.Fprintln(outw)
 	}()
 
 	// Read until EOF (Ctrl‑D)

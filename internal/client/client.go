@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -41,26 +40,34 @@ const defaultValueRegex = `^'?(encrypted:[A-Za-z0-9+/=]+)'?$`
 var (
 	environFunc             = os.Environ
 	execFunc                = syscall.Exec
-	exitFunc                = os.Exit
 	postMapToServerJSONFunc = postMapToServerJSON
 	sleepFunc               = time.Sleep
+	lookPathFunc            = exec.LookPath
 )
 
-func Run(nextArgs []string) {
+// Run performs the client "run" flow and follows the writer/exit-code pattern:
+// - nextArgs are the command and args to exec
+// - outw and errw are writers for stdout/stderr
+// Returns an exit code suitable for os.Exit.
+func Run(nextArgs []string, outw io.Writer, errw io.Writer) int {
 	if len(nextArgs) < 1 {
-		fmt.Fprintln(os.Stderr, util.Errf("run requires a next-binary to execute. Usage: ojster run <next-binary> [args...]"))
-		exitFunc(2)
+		fmt.Fprintln(errw, "run requires a next-binary to execute. Usage: ojster run <next-binary> [args...]")
+		return 2
 	}
 
-	log.Println("ojster run")
+	fmt.Fprintln(errw, "ojster run")
 
 	socketPath := file.GetSocketPath()
 
 	allEnv := environFunc()
-	requestMap := filterEnvByValue(allEnv)
+	requestMap, err := filterEnvByValue(allEnv)
+	if err != nil {
+		fmt.Fprintln(errw, "failed to filter environment:", err)
+		return 2
+	}
 	if len(requestMap) == 0 {
-		fmt.Fprintln(os.Stderr, util.Errf("no environment variables have values matching OJSTER_REGEX; nothing to send"))
-		exitFunc(2)
+		fmt.Fprintln(errw, "no environment variables have values matching OJSTER_REGEX; nothing to send")
+		return 2
 	}
 
 	requestedKeys := make(map[string]struct{}, len(requestMap))
@@ -83,23 +90,28 @@ func Run(nextArgs []string) {
 			break
 		}
 
-		log.Printf("retrying in %s", backoff)
+		// transient error; retry with backoff
+		fmt.Fprintf(errw, "request not successful (status=%d err=%v decodeErr=%v). retrying in %s\n", statusCode, err, decodeErr, backoff)
 		sleepFunc(backoff)
 		backoff = min(backoff*2, maxBackoff)
 	}
 
 	mergedEnv := buildExecEnv(newEnv)
 	nextBin := nextArgs[0]
-	nextBinPath, err := exec.LookPath(nextBin)
+	nextBinPath, err := lookPathFunc(nextBin)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, util.Errf("executable not found %q: %v", nextBin, err))
-		exitFunc(2)
+		fmt.Fprintf(errw, "executable not found %q: %v\n", nextBin, err)
+		return 2
 	}
 	argv := append([]string{nextBin}, nextArgs[1:]...)
 	if err := execFunc(nextBinPath, argv, mergedEnv); err != nil {
-		fmt.Fprintln(os.Stderr, util.Errf("failed to exec %s: %v", nextBinPath, err))
-		exitFunc(1)
+		fmt.Fprintf(errw, "failed to exec %s: %v\n", nextBinPath, err)
+		return 1
 	}
+
+	// If execFunc succeeds the process is replaced and this is not reached.
+	// For test stubs that return nil, return success.
+	return 0
 }
 
 func hasUnexpectedKeys(reply map[string]string, requested map[string]struct{}) bool {
@@ -118,9 +130,14 @@ func isSuccessfulReply(err error, status int, decodeErr error, reply map[string]
 		!hasUnexpectedKeys(reply, requested)
 }
 
-func filterEnvByValue(env []string) map[string]string {
-	valRe := getValueRegex()
-	out := make(map[string]string)
+// filterEnvByValue returns a map of env key->value for entries whose value matches OJSTER_REGEX.
+// Returns an error if the regex from OJSTER_REGEX is invalid.
+func filterEnvByValue(env []string) (map[string]string, error) {
+	valRe, err := getValueRegex()
+	if err != nil {
+		return nil, err
+	}
+	outw := make(map[string]string)
 	for _, kv := range env {
 		parts := strings.SplitN(kv, "=", 2)
 		k := parts[0]
@@ -132,10 +149,10 @@ func filterEnvByValue(env []string) map[string]string {
 			continue
 		}
 		if valRe.MatchString(v) {
-			out[k] = v
+			outw[k] = v
 		}
 	}
-	return out
+	return outw, nil
 }
 
 func postMapToServerJSON(socketPath string, m map[string]string) ([]byte, int, error) {
@@ -202,15 +219,14 @@ func buildExecEnv(newMap map[string]string) []string {
 	return out
 }
 
-func getValueRegex() *regexp.Regexp {
+func getValueRegex() (*regexp.Regexp, error) {
 	pattern := os.Getenv("OJSTER_REGEX")
 	if pattern == "" {
 		pattern = defaultValueRegex
 	}
 	re, err := regexp.Compile(pattern)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, util.Errf("invalid OJSTER_REGEX %q: %v", pattern, err))
-		exitFunc(2)
+		return nil, fmt.Errorf("invalid OJSTER_REGEX %q: %w", pattern, err)
 	}
-	return re
+	return re, nil
 }
