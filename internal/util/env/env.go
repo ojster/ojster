@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -225,6 +226,39 @@ func ParseEnvFile(path string) (map[string]string, error) {
 		return nil, err
 	}
 
+	return parseLines(lines)
+}
+
+// ParseEnvReader parses environment entries from any io.Reader and returns the map.
+// This is a full replacement for in-memory parsing helpers used in tests.
+func ParseEnvReader(r io.Reader) (map[string]string, error) {
+	scanner := bufio.NewScanner(r)
+	lines := make([]string, 0)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return parseLines(lines)
+}
+
+// ParseEnvString parses environment entries from a string and returns the map.
+func ParseEnvString(s string) (map[string]string, error) {
+	scanner := bufio.NewScanner(strings.NewReader(s))
+	lines := make([]string, 0)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return parseLines(lines)
+}
+
+// parseLines contains the core parsing logic shared by file/reader/string entry points.
+func parseLines(lines []string) (map[string]string, error) {
+	out := make(map[string]string)
 	keyRe := regexp.MustCompile(`^\s*([A-Za-z_][A-Za-z0-9_]*)\s*([:=])\s*(.*)$`)
 
 	i := 0

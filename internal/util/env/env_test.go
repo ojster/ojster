@@ -22,6 +22,69 @@ import (
 	"testing"
 )
 
+// exampleLines contains the canonical example content used by multiple tests.
+// Keep these lines exactly as in the original tests to preserve coverage.
+var exampleLines = []string{
+	"# comment line should be ignored",
+	"",
+	// delimiters and spacing
+	"VAR1=VAL",
+	`VAR2="VAL"`,
+	"VAR3='VAL'",
+	"VAR4: VAL",
+	"VAR5 = VAL",
+	"",
+	// inline comment rules
+	"IC1=VAL # comment after space -> comment removed",
+	"IC2=VAL#notacomment",
+	`IC3="VAL # not a comment"` + " # trailing comment -> comment removed",
+	`IC4="VAL" # comment after closing quote -> comment removed`,
+	"",
+	// single-quoted literal (no interpolation)
+	`LIT1='$OTHER'`,
+	`LIT2='${OTHER}'`,
+	"",
+	// escaped quotes
+	`ESC1='Let\'s go!'`,
+	`ESC2="{\"hello\": \"json\"}"`,
+	"",
+	// double-quoted escapes vs single/unquoted literal backslashes
+	`DQ1="some\tvalue"`,
+	`SQ1='some\tvalue'`,
+	`UQ1=some\tvalue`,
+	"",
+	// single-quoted multiline
+	"ML='SOME",
+	"VALUE'",
+}
+
+// canonicalExpected is the single source of truth for expected parsed values
+// for the example content used across multiple tests.
+var canonicalExpected = map[string]string{
+	"VAR1": "VAL",
+	"VAR2": "VAL",
+	"VAR3": "VAL",
+	"VAR4": "VAL",
+	"VAR5": "VAL",
+
+	"IC1": "VAL",
+	"IC2": "VAL#notacomment",
+	"IC3": "VAL # not a comment",
+	"IC4": "VAL",
+
+	"LIT1": "$OTHER",
+	"LIT2": "${OTHER}",
+
+	"ESC1": "Let's go!",
+	"ESC2": `{"hello": "json"}`,
+
+	"DQ1": "some\tvalue",
+	"SQ1": `some\tvalue`,
+	"UQ1": `some\tvalue`,
+
+	"ML": "SOME\nVALUE",
+}
+
 // tmpPath returns a path inside a fresh temp dir for the test.
 func tmpPath(t *testing.T, name string) string {
 	t.Helper()
@@ -46,74 +109,51 @@ func readMapOrFail(t *testing.T, path string) map[string]string {
 	return m
 }
 
+// buildExampleContent joins exampleLines into the canonical test content string.
+func buildExampleContent() string {
+	return strings.Join(exampleLines, "\n") + "\n"
+}
+
 // TestParseEnvFile_Examples covers the documented .env syntax examples in one compact file.
 func TestParseEnvFile_Examples(t *testing.T) {
-	content := strings.Join([]string{
-		"# comment line should be ignored",
-		"",
-		// delimiters and spacing
-		"VAR1=VAL",
-		`VAR2="VAL"`,
-		"VAR3='VAL'",
-		"VAR4: VAL",
-		"VAR5 = VAL",
-		"",
-		// inline comment rules
-		"IC1=VAL # comment after space -> comment removed",
-		"IC2=VAL#notacomment",
-		`IC3="VAL # not a comment"` + " # trailing comment -> comment removed",
-		`IC4="VAL" # comment after closing quote -> comment removed`,
-		"",
-		// single-quoted literal (no interpolation)
-		`LIT1='$OTHER'`,
-		`LIT2='${OTHER}'`,
-		"",
-		// escaped quotes
-		`ESC1='Let\'s go!'`,
-		`ESC2="{\"hello\": \"json\"}"`,
-		"",
-		// double-quoted escapes vs single/unquoted literal backslashes
-		`DQ1="some\tvalue"`,
-		`SQ1='some\tvalue'`,
-		`UQ1=some\tvalue`,
-		"",
-		// single-quoted multiline
-		"ML='SOME",
-		"VALUE'",
-	}, "\n") + "\n"
+	content := buildExampleContent()
 
 	path := tmpPath(t, "examples.env")
 	writeFile(t, path, content)
 
 	got := readMapOrFail(t, path)
 
-	want := map[string]string{
-		"VAR1": "VAL",
-		"VAR2": "VAL",
-		"VAR3": "VAL",
-		"VAR4": "VAL",
-		"VAR5": "VAL",
+	if !reflect.DeepEqual(got, canonicalExpected) {
+		t.Fatalf("ParseEnvFile mismatch\ngot = %#v\nwant= %#v", got, canonicalExpected)
+	}
+}
 
-		"IC1": "VAL",
-		"IC2": "VAL#notacomment",
-		"IC3": "VAL # not a comment",
-		"IC4": "VAL",
+// TestParseEnvString_Examples uses the same example content as TestParseEnvFile_Examples but parses from string.
+func TestParseEnvString_Examples(t *testing.T) {
+	content := buildExampleContent()
 
-		"LIT1": "$OTHER",
-		"LIT2": "${OTHER}",
-
-		"ESC1": "Let's go!",
-		"ESC2": `{"hello": "json"}`,
-
-		"DQ1": "some\tvalue",
-		"SQ1": `some\tvalue`,
-		"UQ1": `some\tvalue`,
-
-		"ML": "SOME\nVALUE",
+	got, err := ParseEnvString(content)
+	if err != nil {
+		t.Fatalf("ParseEnvString error: %v", err)
 	}
 
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("ParseEnvFile mismatch\ngot = %#v\nwant= %#v", got, want)
+	if !reflect.DeepEqual(got, canonicalExpected) {
+		t.Fatalf("ParseEnvString mismatch\ngot = %#v\nwant= %#v", got, canonicalExpected)
+	}
+}
+
+// TestParseEnvReader_Examples uses ParseEnvReader on the same example content.
+func TestParseEnvReader_Examples(t *testing.T) {
+	content := buildExampleContent()
+
+	r := strings.NewReader(content)
+	got, err := ParseEnvReader(r)
+	if err != nil {
+		t.Fatalf("ParseEnvReader error: %v", err)
+	}
+
+	if !reflect.DeepEqual(got, canonicalExpected) {
+		t.Fatalf("ParseEnvReader mismatch\ngot = %#v\nwant= %#v", got, canonicalExpected)
 	}
 }
 
