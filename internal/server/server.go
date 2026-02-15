@@ -53,11 +53,6 @@ func loggingMiddleware(next http.Handler) http.Handler {
 // It writes informational and error messages to the provided writers and returns an
 // integer exit code suitable for passing to os.Exit by the caller.
 func Serve(ctx context.Context, cmdArgs []string, outw io.Writer, errw io.Writer) int {
-	defaultCmd := []string{"/ojster", "unseal", "-json", "-priv-file", "./.env.keys"}
-	cmd := defaultCmd
-	if len(cmdArgs) > 0 {
-		cmd = cmdArgs
-	}
 
 	// Ensure /tmp is tmpfs (security expectation for ephemeral files)
 	if err := checkTempIsTmpfs(os.TempDir()); err != nil {
@@ -74,7 +69,7 @@ func Serve(ctx context.Context, cmdArgs []string, outw io.Writer, errw io.Writer
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /", func(w http.ResponseWriter, r *http.Request) {
-		handlePost(w, r, cmd, privateKeyFile)
+		handlePost(w, r, cmdArgs, privateKeyFile)
 	})
 
 	// Ensure previous socket removed

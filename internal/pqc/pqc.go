@@ -206,28 +206,51 @@ func SealWithPlaintext(pubPath, outPath, keyName string, plaintext []byte, outw 
 	return 0
 }
 
-// UnsealFromFiles reads the env file at inPath and the private key at privPath,
-// decapsulates and decrypts the requested keys (if keys is empty, all sealed keys).
-// On success it writes either JSON (if jsonOut) or newline-separated env entries to outw.
-// Returns an exit code and writes errors to errw.
-func UnsealFromFiles(inPath, privPath string, keys []string, jsonOut bool, outw io.Writer, errw io.Writer) int {
-	// Read private key file
+// loadDecapsulationKey reads privPath, base64-decodes it and returns a DecapsulationKey.
+// On error it writes the same error messages as before to errw and returns a non-zero exit code.
+func loadDecapsulationKey(privPath string, errw io.Writer) (*mlkem.DecapsulationKey768, int) {
 	privFileBytes, err := os.ReadFile(privPath)
 	if err != nil {
 		fmt.Fprintln(errw, fmt.Errorf("failed to read private key file %s: %w", privPath, err))
-		return 1
+		return nil, 1
 	}
 	privText := strings.TrimSpace(string(privFileBytes))
 	privBytes, err := base64.StdEncoding.DecodeString(privText)
 	if err != nil {
 		fmt.Fprintln(errw, fmt.Errorf("invalid base64 private key in %s: %w", privPath, err))
-		return 1
+		return nil, 1
 	}
 
 	dk, err := mlkem.NewDecapsulationKey768(privBytes)
 	if err != nil {
 		fmt.Fprintln(errw, fmt.Errorf("invalid private key in %s: %w", privPath, err))
-		return 1
+		return nil, 1
+	}
+	return dk, 0
+}
+
+// UnsealFromJSON accepts an env map (map[string]string) parsed from JSON,
+// reads the private key at privPath, and performs the same unsealing logic as UnsealFromFiles.
+// The envMap should be the same shape as ParseEnvFile output (key -> raw logical value).
+// Returns an exit code and writes errors to errw.
+func UnsealFromJSON(envMap map[string]string, privPath string, keys []string, jsonOut bool, outw io.Writer, errw io.Writer) int {
+	dk, code := loadDecapsulationKey(privPath, errw)
+	if code != 0 {
+		return code
+	}
+
+	// Use a placeholder path string for error messages when needed
+	return unsealCore(envMap, dk, keys, jsonOut, outw, errw, "<json input>")
+}
+
+// UnsealFromFiles reads the env file at inPath and the private key at privPath,
+// decapsulates and decrypts the requested keys (if keys is empty, all sealed keys).
+// On success it writes either JSON (if jsonOut) or newline-separated env entries to outw.
+// Returns an exit code and writes errors to errw.
+func UnsealFromFiles(inPath, privPath string, keys []string, jsonOut bool, outw io.Writer, errw io.Writer) int {
+	dk, code := loadDecapsulationKey(privPath, errw)
+	if code != 0 {
+		return code
 	}
 
 	// Parse env file into map of key->rawValue (logical unquoted value)
@@ -237,6 +260,13 @@ func UnsealFromFiles(inPath, privPath string, keys []string, jsonOut bool, outw 
 		return 1
 	}
 
+	return unsealCore(envMap, dk, keys, jsonOut, outw, errw, inPath)
+}
+
+// unsealCore contains the shared logic for selecting keys, validating presence,
+// decapsulating, decrypting, and writing output. It returns the same exit codes
+// as the original UnsealFromFiles: 0 success, 1 error, 2 missing keys.
+func unsealCore(envMap map[string]string, dk *mlkem.DecapsulationKey768, keys []string, jsonOut bool, outw io.Writer, errw io.Writer, sourceDesc string) int {
 	// If no keys provided, select all keys whose stored value starts with the sealed prefix
 	if len(keys) == 0 {
 		for k, v := range envMap {
@@ -259,7 +289,7 @@ func UnsealFromFiles(inPath, privPath string, keys []string, jsonOut bool, outw 
 		}
 	}
 	if len(missing) > 0 {
-		fmt.Fprintln(errw, fmt.Errorf("missing keys in %s: %s", inPath, strings.Join(missing, ", ")))
+		fmt.Fprintln(errw, fmt.Errorf("missing keys in %s: %s", sourceDesc, strings.Join(missing, ", ")))
 		return 2
 	}
 

@@ -227,6 +227,58 @@ func TestSealWithPlaintext_UpdateEnvFileFail(t *testing.T) {
 
 // ----------------------------- unseal tests -------------------------------
 
+func TestUnsealFromJSON_HappyPath(t *testing.T) {
+	priv, pub, envFile := tmpPaths(t)
+
+	var outBuf, errBuf bytes.Buffer
+	if code := KeypairWithPaths(priv, pub, &outBuf, &errBuf); code != 0 {
+		t.Fatalf("KeypairWithPaths failed: code=%d stderr=%q", code, errBuf.String())
+	}
+
+	keyName := "MY_SECRET_JSON"
+	plaintext := []byte("json-secret-value")
+	if code := SealWithPlaintext(pub, envFile, keyName, plaintext, &outBuf, &errBuf); code != 0 {
+		t.Fatalf("SealWithPlaintext failed: code=%d stderr=%q", code, errBuf.String())
+	}
+
+	// Read the env file into a map to pass to UnsealFromJSON
+	envMap, err := env.ParseEnvFile(envFile)
+	if err != nil {
+		t.Fatalf("ParseEnvFile failed: %v", err)
+	}
+
+	// Call UnsealFromJSON requesting the single key and expect JSON output.
+	var outJSON bytes.Buffer
+	code := UnsealFromJSON(envMap, priv, []string{keyName}, true, &outJSON, &errBuf)
+	if code != 0 {
+		t.Fatalf("UnsealFromJSON(json) failed: code=%d stderr=%q", code, errBuf.String())
+	}
+
+	var got map[string]string
+	if err := json.Unmarshal(outJSON.Bytes(), &got); err != nil {
+		t.Fatalf("invalid json output: %v", err)
+	}
+	if got[keyName] != string(plaintext) {
+		t.Fatalf("unsealed mismatch json: want=%q got=%q", string(plaintext), got[keyName])
+	}
+
+	// Also test env output path using UnsealFromJSON (non-json output)
+	outBuf.Reset()
+	errBuf.Reset()
+	var envOut bytes.Buffer
+	code = UnsealFromJSON(envMap, priv, []string{keyName}, false, &envOut, &errBuf)
+	if code != 0 {
+		t.Fatalf("UnsealFromJSON(env) failed: code=%d stderr=%q", code, errBuf.String())
+	}
+	parsed, err := env.ParseEnvReader(strings.NewReader(envOut.String()))
+	if err != nil {
+		t.Fatalf("ParseEnvReader failed: %v", err)
+	}
+	if parsed[keyName] != string(plaintext) {
+		t.Fatalf("unsealed mismatch env: want=%q got=%q", string(plaintext), parsed[keyName])
+	}
+}
+
 func TestUnsealFromFiles_PrivFileMissing(t *testing.T) {
 	td := t.TempDir()
 	priv := filepath.Join(td, "no-such-priv.b64")

@@ -28,13 +28,19 @@ import (
 	"time"
 
 	"github.com/ojster/ojster/internal/common"
+	"github.com/ojster/ojster/internal/pqc"
 	"github.com/ojster/ojster/internal/util/env"
 )
 
 // Assign functions to vars so tests can override them
 var environFunc = os.Environ
 
-func handlePost(w http.ResponseWriter, r *http.Request, cmd []string, privateKeyFile string) {
+func handlePost(w http.ResponseWriter, r *http.Request, cmdArgs []string, privateKeyFile string) {
+	cmd := []string{"/ojster", "unseal", "-json", "-priv-file", "./.env.keys"}
+	if len(cmdArgs) > 0 {
+		cmd = cmdArgs
+	}
+
 	defer r.Body.Close()
 
 	var incoming map[string]string
@@ -44,17 +50,59 @@ func handlePost(w http.ResponseWriter, r *http.Request, cmd []string, privateKey
 	}
 
 	requestedKeys := make(map[string]struct{}, len(incoming))
-	lines := make([]string, 0, len(incoming))
-
-	for k, v := range incoming {
+	for k := range incoming {
 		if !common.KeyNameRegex.MatchString(k) {
 			http.Error(w, "invalid key name in request: "+k, http.StatusBadRequest)
 			return
 		}
 		requestedKeys[k] = struct{}{}
-		lines = append(lines, env.FormatEnvEntry(k, v))
 	}
 
+	// If no cmdArgs were provided, call UnsealFromJSON directly.
+	if len(cmdArgs) == 0 {
+		var outBuf, errBuf bytes.Buffer
+		// UnsealFromJSON expects the env map first, then privPath.
+		code := pqc.UnsealFromJSON(incoming, privateKeyFile, nil, true, &outBuf, &errBuf)
+		if code != 0 {
+			// Mirror previous subprocess behavior: non-zero -> Bad Gateway
+			http.Error(w, strings.TrimSpace(errBuf.String()), http.StatusBadGateway)
+			return
+		}
+
+		// Parse JSON output from UnsealFromJSON
+		var outMap map[string]string
+		if err := json.Unmarshal(outBuf.Bytes(), &outMap); err != nil {
+			http.Error(w, "unseal produced invalid JSON", http.StatusBadGateway)
+			return
+		}
+
+		// Ensure returned keys are subset of requested keys
+		for k := range outMap {
+			if _, ok := requestedKeys[k]; !ok {
+				http.Error(w, "unseal returned unexpected keys", http.StatusBadGateway)
+				return
+			}
+		}
+
+		finalMap := make(map[string]string, len(outMap))
+		for k := range requestedKeys {
+			if v, ok := outMap[k]; ok {
+				finalMap[k] = v
+			}
+		}
+		if len(finalMap) == 0 {
+			http.Error(w, "unseal produced no acceptable env entries", http.StatusBadGateway)
+			return
+		}
+
+		j, _ := json.Marshal(finalMap)
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(j)
+		return
+	}
+
+	// Existing subprocess path (unchanged)
 	tmpDir, err := os.MkdirTemp("", "ojster-")
 	if err != nil {
 		http.Error(w, "failed to create temp dir: "+err.Error(), http.StatusInternalServerError)
@@ -63,6 +111,10 @@ func handlePost(w http.ResponseWriter, r *http.Request, cmd []string, privateKey
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Write .env using the formatted lines (ensure trailing newline)
+	lines := make([]string, 0, len(incoming))
+	for k, v := range incoming {
+		lines = append(lines, env.FormatEnvEntry(k, v))
+	}
 	envPath := filepath.Join(tmpDir, ".env")
 	s := strings.Join(lines, "\n")
 	if !strings.HasSuffix(s, "\n") {

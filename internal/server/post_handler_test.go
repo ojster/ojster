@@ -15,11 +15,16 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ojster/ojster/internal/pqc"
 )
 
 //
@@ -82,5 +87,59 @@ func TestHandlePost_Errors(t *testing.T) {
 			ExpectStatus(t, rec, tc.wantCode)
 			ExpectBodyContains(t, rec, tc.wantSub)
 		})
+	}
+}
+
+// Test that when cmdArgs is empty the handler uses the direct UnsealFromJSON path.
+func TestHandlePost_DirectUnsealPath(t *testing.T) {
+	td := t.TempDir()
+	priv := filepath.Join(td, "priv.b64")
+	pub := filepath.Join(td, "pub.b64")
+	envFile := filepath.Join(td, "sealed.env")
+
+	// Generate keypair
+	var outBuf, errBuf bytes.Buffer
+	if code := pqc.KeypairWithPaths(priv, pub, &outBuf, &errBuf); code != 0 {
+		t.Fatalf("KeypairWithPaths failed: code=%d stderr=%q", code, errBuf.String())
+	}
+
+	// Seal a value into envFile under key "FOO"
+	plaintext := []byte("direct-secret")
+	if code := pqc.SealWithPlaintext(pub, envFile, "FOO", plaintext, &outBuf, &errBuf); code != 0 {
+		t.Fatalf("SealWithPlaintext failed: code=%d stderr=%q", code, errBuf.String())
+	}
+
+	// Read the sealed value from the env file (format KEY=VALUE\n)
+	b, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("read sealed env file: %v", err)
+	}
+	// env file contains a single line "FOO=<sealed>"
+	// Extract the part after '='
+	line := string(bytes.TrimSpace(b))
+	parts := strings.SplitN(line, "=", 2)
+	if len(parts) != 2 {
+		t.Fatalf("unexpected sealed env format: %q", line)
+	}
+	sealedValue := parts[1]
+
+	// Build request body with the sealed value (client sends sealed values)
+	reqBodyMap := map[string]string{"FOO": sealedValue}
+	reqBody, err := json.Marshal(reqBodyMap)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+
+	// cmd == nil triggers the direct UnsealFromJSON path in handlePost
+	rec := runPost(t, reqBody, nil, priv)
+	ExpectStatus(t, rec, http.StatusOK)
+
+	var out map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON response: %v", err)
+	}
+
+	if out["FOO"] != string(plaintext) {
+		t.Fatalf("expected FOO=%q, got %#v", string(plaintext), out)
 	}
 }
