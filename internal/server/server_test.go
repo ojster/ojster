@@ -186,3 +186,28 @@ func getUnixHTTPClient(socketPath string) *http.Client {
 	}
 	return &http.Client{Transport: tr, Timeout: 500 * time.Millisecond}
 }
+
+//
+// ─────────────────────────────────────────────────────────────
+//   loggingMiddleware
+// ─────────────────────────────────────────────────────────────
+//
+
+func TestLoggingMiddleware(t *testing.T) {
+	called := false
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusTeapot)
+	})
+	mw := loggingMiddleware(h)
+
+	req := httptest.NewRequest("GET", "/x", nil)
+	rec := httptest.NewRecorder()
+
+	mw.ServeHTTP(rec, req)
+
+	if !called {
+		t.Fatalf("handler not called")
+	}
+	ExpectStatus(t, rec, http.StatusTeapot)
+}
