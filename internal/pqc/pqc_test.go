@@ -794,3 +794,45 @@ func TestEncryptDecrypt_Errors(t *testing.T) {
 		t.Fatalf("expected error for short blob")
 	}
 }
+
+// ------------------------------ regex roundtrip ---------------------------
+
+func TestBuildParseRegexRoundtrip(t *testing.T) {
+	// create two random-ish byte slices (not cryptographically important for this test)
+	mlkem := []byte{0x01, 0x02, 0x03, 0x04}
+	gcm := []byte{0x05, 0x06, 0x07}
+
+	// Build sealed value
+	sealed := BuildSealed(mlkem, gcm)
+
+	// IsSealed should accept it (unquoted)
+	if !IsSealed(sealed) {
+		t.Fatalf("BuildSealed produced value that IsSealed rejects: %q", sealed)
+	}
+
+	// ParseSealed should return the two base64 parts
+	mlkemB64, gcmB64, err := ParseSealed(sealed)
+	if err != nil {
+		t.Fatalf("ParseSealed failed: %v", err)
+	}
+	// verify base64 roundtrip
+	if got := base64.StdEncoding.EncodeToString(mlkem); got != mlkemB64 {
+		t.Fatalf("mlkem base64 mismatch: want=%q got=%q", got, mlkemB64)
+	}
+	if got := base64.StdEncoding.EncodeToString(gcm); got != gcmB64 {
+		t.Fatalf("gcm base64 mismatch: want=%q got=%q", got, gcmB64)
+	}
+
+	// DefaultValueRegexp should match both unquoted and single-quoted forms
+	re, err := DefaultValueRegexp()
+	if err != nil {
+		t.Fatalf("DefaultValueRegexp compile failed: %v", err)
+	}
+	if !re.MatchString(sealed) {
+		t.Fatalf("DefaultValueRegexp did not match sealed value: %q", sealed)
+	}
+	quoted := "'" + sealed + "'"
+	if !re.MatchString(quoted) {
+		t.Fatalf("DefaultValueRegexp did not match quoted sealed value: %q", quoted)
+	}
+}

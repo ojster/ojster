@@ -148,7 +148,9 @@ func TestHandlePost_DirectUnsealPath(t *testing.T) {
 func TestHandlePost_DirectUnsealPath_StatusMapping(t *testing.T) {
 	t.Run("missing private key -> 500", func(t *testing.T) {
 		// Build a sealed-looking value but point to a non-existent private key
-		reqBodyMap := map[string]string{"FOO": "OJSTER-1:AAA:BBB"}
+		// valid sealed value (we don't need real mlkem/gcm bytes for format tests)
+		valid := pqc.BuildSealed([]byte{0x01, 0x02}, []byte{0x03, 0x04})
+		reqBodyMap := map[string]string{"FOO": valid}
 		reqBody, _ := json.Marshal(reqBodyMap)
 
 		rec := runPost(t, reqBody, nil, "/nonexistent/priv.b64")

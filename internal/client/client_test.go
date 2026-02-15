@@ -26,6 +26,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ojster/ojster/internal/pqc"
 )
 
 //
@@ -116,11 +118,16 @@ func TestFilterEnvByValue(t *testing.T) {
 	t.Run("default_regex", func(t *testing.T) {
 		t.Setenv("OJSTER_REGEX", "")
 
+		// Construct canonical sealed values for tests
+		mlkem := []byte{0x01, 0x02, 0x03}
+		gcm := []byte{0x04, 0x05}
+		sealed := pqc.BuildSealed(mlkem, gcm)
+
 		env := []string{
-			"GOOD=OJSTER-1:ABC123",
-			"WRAPPED='OJSTER-1:XYZ'",
+			"GOOD=" + sealed,
+			"WRAPPED='" + sealed + "'",
 			"BAD=plain",
-			"INVALID-NAME=OJSTER-1:ABC",
+			"INVALID-NAME=" + sealed,
 		}
 
 		out, err := filterEnvByValue(env)
@@ -214,14 +221,19 @@ func TestRun_BasicFlow(t *testing.T) {
 	oldPost := postMapToServerJSONFunc
 	t.Cleanup(func() { postMapToServerJSONFunc = oldPost })
 
+	// Build a canonical sealed value using pqc helper
+	mlkem := []byte{0x01, 0x02, 0x03}
+	gcm := []byte{0x04, 0x05}
+	sealed := pqc.BuildSealed(mlkem, gcm)
+
 	postMapToServerJSONFunc = func(socketPath string, m map[string]string) ([]byte, int, error) {
-		if len(m) != 1 || m["SECRET"] != "OJSTER-1:ABC" {
+		if len(m) != 1 || m["SECRET"] != sealed {
 			t.Fatalf("unexpected request map: %#v", m)
 		}
 		return []byte(`{"SECRET":"decrypted"}`), 200, nil
 	}
 
-	t.Setenv("SECRET", "OJSTER-1:ABC")
+	t.Setenv("SECRET", sealed)
 	t.Setenv("PLAIN", "hello")
 
 	var outBuf bytes.Buffer
@@ -305,7 +317,12 @@ func TestRun_RetryScenarios(t *testing.T) {
 				return resp, code, nil
 			}
 
-			t.Setenv("SECRET", "OJSTER-1:ABC")
+			// Use canonical sealed format so the stricter pqc.DefaultValueRegex matches.
+			mlkem := []byte{0x01, 0x02, 0x03}
+			gcm := []byte{0x04, 0x05}
+			sealed := pqc.BuildSealed(mlkem, gcm)
+
+			t.Setenv("SECRET", sealed)
 
 			var outBuf bytes.Buffer
 			var errBuf bytes.Buffer

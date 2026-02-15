@@ -30,10 +30,9 @@ import (
 	"time"
 
 	"github.com/ojster/ojster/internal/common"
+	"github.com/ojster/ojster/internal/pqc"
 	"github.com/ojster/ojster/internal/util/file"
 )
-
-const defaultValueRegex = `^'?(OJSTER-1:[A-Za-z0-9+/=:]+)'?$`
 
 // Assign functions to vars so tests can override them
 var (
@@ -249,7 +248,7 @@ func buildExecEnv(newMap map[string]string) []string {
 func getValueRegex() (*regexp.Regexp, error) {
 	pattern := os.Getenv("OJSTER_REGEX")
 	if pattern == "" {
-		pattern = defaultValueRegex
+		pattern = pqc.DefaultValueRegex()
 	}
 	re, err := regexp.Compile(pattern)
 	if err != nil {

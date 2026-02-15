@@ -27,6 +27,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -47,6 +48,56 @@ var (
 	ErrUnseal      = errors.New("pqc: unseal error")
 	ErrMissingKeys = errors.New("pqc: missing keys")
 )
+
+// BuildSealed builds the canonical sealed string from the two binary parts.
+func BuildSealed(mlkemCiphertext, gcmBlob []byte) string {
+	mlkemB64 := base64.StdEncoding.EncodeToString(mlkemCiphertext)
+	gcmB64 := base64.StdEncoding.EncodeToString(gcmBlob)
+	return Prefix + mlkemB64 + sep + gcmB64
+}
+
+// ParseSealed splits a sealed value into the two base64 parts and returns them.
+// It returns an error if the value doesn't start with Prefix or doesn't contain Sep.
+func ParseSealed(val string) (mlkemB64 string, gcmB64 string, err error) {
+	if !strings.HasPrefix(val, Prefix) {
+		return "", "", fmt.Errorf("value does not start with %s", Prefix)
+	}
+	payload := strings.TrimPrefix(val, Prefix)
+	parts := strings.SplitN(payload, sep, 2)
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("sealed value malformed")
+	}
+	return parts[0], parts[1], nil
+}
+
+// IsSealed reports whether the logical (unquoted) value looks like a sealed value.
+func IsSealed(val string) bool {
+	// Accept optional single or double quotes around the whole value.
+	if len(val) >= 2 {
+		if (val[0] == '\'' && val[len(val)-1] == '\'') || (val[0] == '"' && val[len(val)-1] == '"') {
+			val = val[1 : len(val)-1]
+		}
+	}
+	if !strings.HasPrefix(val, Prefix) {
+		return false
+	}
+	payload := strings.TrimPrefix(val, Prefix)
+	// quick check for separator presence
+	return strings.Contains(payload, sep)
+}
+
+// DefaultValueRegex returns the canonical regex string the client should use to detect sealed values.
+// It mirrors the previous defaultValueRegex but is generated from Prefix and a base64 character class.
+func DefaultValueRegex() string {
+	// base64 chars plus optional trailing '=' padding and optional surrounding single quotes
+	// allow the whole value optionally quoted with single quotes (client previously used ^'?(OJSTER-1:... )'?$)
+	// We keep the capturing group for backward compatibility with existing client code.
+	base64Class := `[A-Za-z0-9+/=]+`
+	return fmt.Sprintf(`^'?(%s%s%s)'?$`, regexp.QuoteMeta(Prefix), base64Class, regexp.QuoteMeta(sep)+base64Class)
+}
+
+// DefaultValueRegexp compiles DefaultValueRegex.
+func DefaultValueRegexp() (*regexp.Regexp, error) { return regexp.Compile(DefaultValueRegex()) }
 
 func DefaultPrivFile() string { return defaultPrivFile }
 func DefaultPubFile() string  { return defaultPubFile }
@@ -318,14 +369,12 @@ func decryptCore(envMap map[string]string, dk *mlkem.DecapsulationKey768, keys [
 			msg := fmt.Sprintf("value for %s does not appear to be sealed (missing Prefix)", k)
 			return nil, nil, 1, msg
 		}
-		payload := strings.TrimPrefix(stored, Prefix)
-		parts := strings.SplitN(payload, sep, 2)
-		if len(parts) != 2 {
+
+		mlkemB64, gcmB64, perr := ParseSealed(stored)
+		if perr != nil {
 			msg := fmt.Sprintf("sealed value for %s malformed", k)
 			return nil, nil, 1, msg
 		}
-		mlkemB64 := parts[0]
-		gcmB64 := parts[1]
 
 		mlkemCiphertext, err := base64.StdEncoding.DecodeString(mlkemB64)
 		if err != nil {
