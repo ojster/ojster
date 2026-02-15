@@ -28,7 +28,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ojster/ojster/internal/common"
 	"github.com/ojster/ojster/internal/pqc"
 	"github.com/ojster/ojster/internal/util/env"
 )
@@ -65,7 +64,7 @@ func handlePost(w http.ResponseWriter, r *http.Request, cmdArgs []string, privat
 
 	requestedKeys := make(map[string]struct{}, len(incoming))
 	for k := range incoming {
-		if !common.KeyNameRegex.MatchString(k) {
+		if !env.KeyNameRegex.MatchString(k) {
 			http.Error(w, "invalid key name in request: "+k, http.StatusBadRequest)
 			return
 		}

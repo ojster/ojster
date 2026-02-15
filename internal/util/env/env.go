@@ -28,6 +28,9 @@ import (
 	"github.com/ojster/ojster/internal/util/file"
 )
 
+// KeyNameRegex is the canonical regexp for valid environment key names.
+var KeyNameRegex = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+
 // UpdateEnvFile replaces or appends KEY=VALUE in path. VALUE should be the raw value
 // (no surrounding quotes). If VALUE contains newlines, it will be written as a
 // single-quoted multiline value unless it contains single quotes or ends with a newline,

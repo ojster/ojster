@@ -29,8 +29,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ojster/ojster/internal/common"
 	"github.com/ojster/ojster/internal/pqc"
+	"github.com/ojster/ojster/internal/util/env"
 	"github.com/ojster/ojster/internal/util/file"
 )
 
@@ -158,20 +158,20 @@ func Run(nextArgs []string, outw io.Writer, errw io.Writer) int {
 
 // filterEnvByValue returns a map of env key->value for entries whose value matches OJSTER_REGEX.
 // Returns an error if the regex from OJSTER_REGEX is invalid.
-func filterEnvByValue(env []string) (map[string]string, error) {
+func filterEnvByValue(envMap []string) (map[string]string, error) {
 	valRe, err := getValueRegex()
 	if err != nil {
 		return nil, err
 	}
 	outw := make(map[string]string)
-	for _, kv := range env {
+	for _, kv := range envMap {
 		parts := strings.SplitN(kv, "=", 2)
 		k := parts[0]
 		v := ""
 		if len(parts) > 1 {
 			v = parts[1]
 		}
-		if !common.KeyNameRegex.MatchString(k) {
+		if !env.KeyNameRegex.MatchString(k) {
 			continue
 		}
 		if valRe.MatchString(v) {
