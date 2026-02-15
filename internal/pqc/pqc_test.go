@@ -19,6 +19,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -247,9 +248,9 @@ func TestUnsealMap_HappyPath(t *testing.T) {
 	}
 
 	// Call UnsealMap and expect a decrypted map directly
-	decrypted, code, msg := UnsealMap(envMap, priv, []string{keyName})
-	if code != 0 {
-		t.Fatalf("UnsealMap failed: code=%d msg=%q", code, msg)
+	decrypted, err := UnsealMap(envMap, priv, []string{keyName})
+	if err != nil {
+		t.Fatalf("UnsealMap failed: err=%v", err)
 	}
 	if got, ok := decrypted[keyName]; !ok {
 		t.Fatalf("UnsealMap result missing key %s", keyName)
@@ -273,12 +274,42 @@ func TestUnsealMap_PrivFileMissing(t *testing.T) {
 		t.Fatalf("ParseEnvFile failed: %v", err)
 	}
 
-	decrypted, code, msg := UnsealMap(envMap, priv, nil)
-	if code == 0 {
-		t.Fatalf("expected non-zero exit code when private key file missing; got decrypted=%v", decrypted)
+	decrypted, err := UnsealMap(envMap, priv, nil)
+	if err == nil {
+		t.Fatalf("expected error when private key file missing; got decrypted=%v", decrypted)
 	}
-	if !strings.Contains(msg, "failed to read private key file") {
-		t.Fatalf("expected private key read error message; got %q", msg)
+	if !errors.Is(err, ErrConfig) {
+		t.Fatalf("expected ErrConfig for missing private key, got: %v", err)
+	}
+}
+
+func TestUnsealMap_MalformedSealedValue(t *testing.T) {
+	td := t.TempDir()
+	priv := filepath.Join(td, "priv.b64")
+	pub := filepath.Join(td, "pub.b64")
+	envFile := filepath.Join(td, "env.env")
+
+	var outBuf, errBuf bytes.Buffer
+	if code := KeypairWithPaths(priv, pub, &outBuf, &errBuf); code != 0 {
+		t.Fatalf("KeypairWithPaths failed: code=%d stderr=%q", code, errBuf.String())
+	}
+	if code := SealWithPlaintext(pub, envFile, "BAD", []byte("v"), &outBuf, &errBuf); code != 0 {
+		t.Fatalf("SealWithPlaintext failed: code=%d stderr=%q", code, errBuf.String())
+	}
+
+	envMap, err := env.ParseEnvFile(envFile)
+	if err != nil {
+		t.Fatalf("ParseEnvFile failed: %v", err)
+	}
+	// Replace the sealed value with a malformed payload (no separator)
+	envMap["BAD"] = Prefix + "onlyonepart"
+
+	decrypted, err := UnsealMap(envMap, priv, []string{"BAD"})
+	if err == nil {
+		t.Fatalf("expected error for malformed sealed value; got decrypted=%v", decrypted)
+	}
+	if !errors.Is(err, ErrUnseal) {
+		t.Fatalf("expected ErrUnseal for malformed sealed value, got: %v", err)
 	}
 }
 
@@ -397,13 +428,13 @@ func TestUnseal_InvalidBase64Mlkem(t *testing.T) {
 		t.Fatalf("ParseEnvFile failed: %v", err)
 	}
 	orig := envMap["K"]
-	payload := strings.TrimPrefix(orig, prefix)
+	payload := strings.TrimPrefix(orig, Prefix)
 	parts := strings.SplitN(payload, sep, 2)
 	if len(parts) != 2 {
 		t.Fatalf("unexpected sealed format: %q", orig)
 	}
 
-	newSealed := prefix + "!!!" + sep + parts[1]
+	newSealed := Prefix + "!!!" + sep + parts[1]
 	replaceSealedValue(t, envFile, "K", newSealed)
 
 	code, stderr := runUnseal(t, envFile, priv, []string{"K"}, false)
@@ -434,13 +465,13 @@ func TestUnseal_InvalidBase64Gcm(t *testing.T) {
 		t.Fatalf("ParseEnvFile failed: %v", err)
 	}
 	orig := envMap["K"]
-	payload := strings.TrimPrefix(orig, prefix)
+	payload := strings.TrimPrefix(orig, Prefix)
 	parts := strings.SplitN(payload, sep, 2)
 	if len(parts) != 2 {
 		t.Fatalf("unexpected sealed format: %q", orig)
 	}
 
-	newSealed := prefix + parts[0] + sep + "!!!"
+	newSealed := Prefix + parts[0] + sep + "!!!"
 	replaceSealedValue(t, envFile, "K", newSealed)
 
 	code, stderr := runUnseal(t, envFile, priv, []string{"K"}, false)
@@ -471,7 +502,7 @@ func TestUnseal_DecapsulationFailed(t *testing.T) {
 		t.Fatalf("ParseEnvFile failed: %v", err)
 	}
 	orig := envMap["K"]
-	payload := strings.TrimPrefix(orig, prefix)
+	payload := strings.TrimPrefix(orig, Prefix)
 	parts := strings.SplitN(payload, sep, 2)
 	if len(parts) != 2 {
 		t.Fatalf("unexpected sealed format: %q", orig)
@@ -482,7 +513,7 @@ func TestUnseal_DecapsulationFailed(t *testing.T) {
 		t.Fatalf("rand.Read failed: %v", err)
 	}
 	mlkemB64 := base64.StdEncoding.EncodeToString(rb)
-	newSealed := prefix + mlkemB64 + sep + parts[1]
+	newSealed := Prefix + mlkemB64 + sep + parts[1]
 	replaceSealedValue(t, envFile, "K", newSealed)
 
 	code, stderr := runUnseal(t, envFile, priv, []string{"K"}, false)
@@ -513,7 +544,7 @@ func TestUnseal_DecryptionFailed(t *testing.T) {
 		t.Fatalf("ParseEnvFile failed: %v", err)
 	}
 	orig := envMap["K"]
-	payload := strings.TrimPrefix(orig, prefix)
+	payload := strings.TrimPrefix(orig, Prefix)
 	parts := strings.SplitN(payload, sep, 2)
 	if len(parts) != 2 {
 		t.Fatalf("unexpected sealed format: %q", orig)
@@ -529,7 +560,7 @@ func TestUnseal_DecryptionFailed(t *testing.T) {
 	gcmBlob[len(gcmBlob)-1] ^= 0xFF
 	gcmB64 := base64.StdEncoding.EncodeToString(gcmBlob)
 
-	newSealed := prefix + parts[0] + sep + gcmB64
+	newSealed := Prefix + parts[0] + sep + gcmB64
 	replaceSealedValue(t, envFile, "K", newSealed)
 
 	code, stderr := runUnseal(t, envFile, priv, []string{"K"}, false)
@@ -616,9 +647,9 @@ func TestUnseal_SealedValueMalformedParts(t *testing.T) {
 		t.Fatalf("KeypairWithPaths failed: %d %q", code, errBuf.String())
 	}
 
-	// Write an env file where the value looks like a sealed value (has prefix)
+	// Write an env file where the value looks like a sealed value (has Prefix)
 	// but the payload does not contain the expected separator, so SplitN yields != 2.
-	malformed := prefix + "onlyonepart" // no sep present
+	malformed := Prefix + "onlyonepart" // no sep present
 	if err := os.WriteFile(envFile, []byte("BAD="+malformed+"\n"), 0o600); err != nil {
 		t.Fatalf("write env: %v", err)
 	}
@@ -657,7 +688,7 @@ func TestSealAndUnseal_HappyPath(t *testing.T) {
 	if !ok {
 		t.Fatalf("env file missing key %s", keyName)
 	}
-	if !strings.HasPrefix(val, prefix) {
+	if !strings.HasPrefix(val, Prefix) {
 		t.Fatalf("sealed value missing prefix: %q", val)
 	}
 

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,6 +36,11 @@ import (
 // Assign functions to vars so tests can override them
 var environFunc = os.Environ
 
+// allow tests to override the unseal implementation used by handlePost
+var unsealMapFunc = func(envMap map[string]string, privPath string, keys []string) (map[string]string, error) {
+	return pqc.UnsealMap(envMap, privPath, keys)
+}
+
 func handlePost(w http.ResponseWriter, r *http.Request, cmdArgs []string, privateKeyFile string) {
 	cmd := []string{"/ojster", "unseal", "-json", "-priv-file", "./.env.keys"}
 	if len(cmdArgs) > 0 {
@@ -44,9 +50,17 @@ func handlePost(w http.ResponseWriter, r *http.Request, cmdArgs []string, privat
 	defer r.Body.Close()
 
 	var incoming map[string]string
-	if err := readJSON(r.Body, 10*1024*1024, &incoming); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+	{
+		const maxBytes = 10 * 1024 * 1024
+		data, err := io.ReadAll(io.LimitReader(r.Body, maxBytes))
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to read body: %v", err), http.StatusBadRequest)
+			return
+		}
+		if err := json.Unmarshal(data, &incoming); err != nil {
+			http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
+			return
+		}
 	}
 
 	requestedKeys := make(map[string]struct{}, len(incoming))
@@ -58,51 +72,55 @@ func handlePost(w http.ResponseWriter, r *http.Request, cmdArgs []string, privat
 		requestedKeys[k] = struct{}{}
 	}
 
-	// If no cmdArgs were provided, call UnsealMap directly.
+	// Dispatch to the appropriate branch
 	if len(cmdArgs) == 0 {
-		outMap, code, errMsg := pqc.UnsealMap(incoming, privateKeyFile, nil)
-		if code != 0 {
-			// Map pqc exit codes to HTTP status:
-			// 1 -> internal worker failure (502), but if errMsg indicates server config (missing key file) treat as 500.
-			// 2 -> missing keys (treat as 502 since worker couldn't produce requested keys).
-			// For now follow previous behavior: non-zero -> 502, but prefer 500 for private-key read errors.
-			if strings.Contains(errMsg, "failed to read private key file") ||
-				strings.Contains(errMsg, "invalid base64 private key") ||
-				strings.Contains(errMsg, "invalid private key") {
-				http.Error(w, errMsg, http.StatusInternalServerError)
-				return
-			}
-			http.Error(w, errMsg, http.StatusBadGateway)
+		handlePostDirectUnseal(w, incoming, requestedKeys, privateKeyFile)
+		return
+	}
+	handlePostSubprocessUnseal(w, incoming, requestedKeys, cmd, privateKeyFile)
+}
+
+// handlePostDirectUnseal handles the path where the server calls UnsealMap directly.
+func handlePostDirectUnseal(w http.ResponseWriter, incoming map[string]string, requestedKeys map[string]struct{}, privateKeyFile string) {
+	outMap, err := unsealMapFunc(incoming, privateKeyFile, nil)
+	if err != nil {
+		switch {
+		case errors.Is(err, pqc.ErrConfig):
+			http.Error(w, err.Error(), http.StatusInternalServerError) // 500
+			return
+		default:
+			http.Error(w, err.Error(), http.StatusBadGateway) // 502
 			return
 		}
+	}
 
-		// Ensure returned keys are subset of requested keys
-		for k := range outMap {
-			if _, ok := requestedKeys[k]; !ok {
-				http.Error(w, "unseal returned unexpected keys", http.StatusBadGateway)
-				return
-			}
-		}
-
-		finalMap := make(map[string]string, len(outMap))
-		for k := range requestedKeys {
-			if v, ok := outMap[k]; ok {
-				finalMap[k] = v
-			}
-		}
-		if len(finalMap) == 0 {
-			http.Error(w, "unseal produced no acceptable env entries", http.StatusBadGateway)
+	// Ensure returned keys are subset of requested keys
+	for k := range outMap {
+		if _, ok := requestedKeys[k]; !ok {
+			http.Error(w, "unseal returned unexpected keys", http.StatusBadGateway)
 			return
 		}
+	}
 
-		j, _ := json.Marshal(finalMap)
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(j)
+	finalMap := make(map[string]string, len(outMap))
+	for k := range requestedKeys {
+		if v, ok := outMap[k]; ok {
+			finalMap[k] = v
+		}
+	}
+	if len(finalMap) == 0 {
+		http.Error(w, "unseal produced no acceptable env entries", http.StatusBadGateway)
 		return
 	}
 
-	// Existing subprocess path (unchanged)
+	j, _ := json.Marshal(finalMap)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(j)
+}
+
+// handlePostSubprocessUnseal handles the path where the server writes files and runs a subprocess.
+func handlePostSubprocessUnseal(w http.ResponseWriter, incoming map[string]string, requestedKeys map[string]struct{}, cmd []string, privateKeyFile string) {
 	tmpDir, err := os.MkdirTemp("", "ojster-")
 	if err != nil {
 		http.Error(w, "failed to create temp dir: "+err.Error(), http.StatusInternalServerError)
@@ -184,15 +202,4 @@ func handlePost(w http.ResponseWriter, r *http.Request, cmdArgs []string, privat
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(j)
-}
-
-func readJSON(r io.Reader, maxBytes int64, v any) error {
-	data, err := io.ReadAll(io.LimitReader(r, maxBytes))
-	if err != nil {
-		return fmt.Errorf("failed to read body: %v", err)
-	}
-	if err := json.Unmarshal(data, v); err != nil {
-		return fmt.Errorf("invalid JSON: %v", err)
-	}
-	return nil
 }

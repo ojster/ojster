@@ -38,8 +38,14 @@ const (
 	nonceSizeGCM    = 12 // TODO: decide if this size is sufficient
 	defaultPrivFile = "ojster_priv.key"
 	defaultPubFile  = "ojster_pub.key"
-	prefix          = "OJSTER-1:"
+	Prefix          = "OJSTER-1:"
 	sep             = ":" // separator between mlkem ciphertext and gcm blob
+)
+
+var (
+	ErrConfig      = errors.New("pqc: config error")
+	ErrUnseal      = errors.New("pqc: unseal error")
+	ErrMissingKeys = errors.New("pqc: missing keys")
 )
 
 func DefaultPrivFile() string { return defaultPrivFile }
@@ -193,7 +199,7 @@ func SealWithPlaintext(pubPath, outPath, keyName string, plaintext []byte, outw 
 
 	mlkemB64 := base64.StdEncoding.EncodeToString(mlkemCiphertext)
 	gcmB64 := base64.StdEncoding.EncodeToString(gcmBlob)
-	sealed := prefix + mlkemB64 + sep + gcmB64
+	sealed := Prefix + mlkemB64 + sep + gcmB64
 
 	if err := env.UpdateEnvFile(outPath, keyName, sealed); err != nil {
 		fmt.Fprintln(errw, fmt.Errorf("failed to update env file %s: %w", outPath, err))
@@ -231,23 +237,26 @@ func loadDecapsulationKey(privPath string, errw io.Writer) (*mlkem.Decapsulation
 }
 
 // UnsealMap decrypts the provided envMap using the private key at privPath.
-// It returns the decrypted map (only keys that were successfully decrypted), an exit code,
-// and a textual error message (stderr) if non-zero code. Exit codes match UnsealFromFiles:
-// 0 success, 1 error, 2 missing keys.
-func UnsealMap(envMap map[string]string, privPath string, keys []string) (map[string]string, int, string) {
+// It returns the decrypted map or a sentinel error (ErrConfig, ErrUnseal, ErrMissingKeys).
+func UnsealMap(envMap map[string]string, privPath string, keys []string) (map[string]string, error) {
 	// capture stderr from loadDecapsulationKey
 	var errBuf bytes.Buffer
 	dk, code := loadDecapsulationKey(privPath, &errBuf)
 	if code != 0 {
-		return nil, code, strings.TrimSpace(errBuf.String())
+		// loadDecapsulationKey failures are configuration / I/O errors
+		return nil, fmt.Errorf("%w: %s", ErrConfig, strings.TrimSpace(errBuf.String()))
 	}
 
 	decrypted, _, code, msg := decryptCore(envMap, dk, keys, "<map input>")
 	if code != 0 {
-		// return the message so callers can decide HTTP status mapping
-		return nil, code, msg
+		switch code {
+		case 2:
+			return nil, fmt.Errorf("%w: %s", ErrMissingKeys, msg)
+		default:
+			return nil, fmt.Errorf("%w: %s", ErrUnseal, msg)
+		}
 	}
-	return decrypted, 0, ""
+	return decrypted, nil
 }
 
 // UnsealFromFiles reads the env file at inPath and the private key at privPath,
@@ -274,10 +283,10 @@ func UnsealFromFiles(inPath, privPath string, keys []string, jsonOut bool, outw 
 // It returns the decrypted map, the resolved keys slice (in deterministic order),
 // an exit code, and an error message string (if non-zero code).
 func decryptCore(envMap map[string]string, dk *mlkem.DecapsulationKey768, keys []string, sourceDesc string) (map[string]string, []string, int, string) {
-	// If no keys provided, select all keys whose stored value starts with the sealed prefix
+	// If no keys provided, select all keys whose stored value starts with the sealed Prefix
 	if len(keys) == 0 {
 		for k, v := range envMap {
-			if strings.HasPrefix(v, prefix) {
+			if strings.HasPrefix(v, Prefix) {
 				keys = append(keys, k)
 			}
 		}
@@ -305,11 +314,11 @@ func decryptCore(envMap map[string]string, dk *mlkem.DecapsulationKey768, keys [
 
 	for _, k := range keys {
 		stored := envMap[k]
-		if !strings.HasPrefix(stored, prefix) {
-			msg := fmt.Sprintf("value for %s does not appear to be sealed (missing prefix)", k)
+		if !strings.HasPrefix(stored, Prefix) {
+			msg := fmt.Sprintf("value for %s does not appear to be sealed (missing Prefix)", k)
 			return nil, nil, 1, msg
 		}
-		payload := strings.TrimPrefix(stored, prefix)
+		payload := strings.TrimPrefix(stored, Prefix)
 		parts := strings.SplitN(payload, sep, 2)
 		if len(parts) != 2 {
 			msg := fmt.Sprintf("sealed value for %s malformed", k)

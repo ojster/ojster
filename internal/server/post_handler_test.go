@@ -17,6 +17,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -142,4 +143,106 @@ func TestHandlePost_DirectUnsealPath(t *testing.T) {
 	if out["FOO"] != string(plaintext) {
 		t.Fatalf("expected FOO=%q, got %#v", string(plaintext), out)
 	}
+}
+
+func TestHandlePost_DirectUnsealPath_StatusMapping(t *testing.T) {
+	t.Run("missing private key -> 500", func(t *testing.T) {
+		// Build a sealed-looking value but point to a non-existent private key
+		reqBodyMap := map[string]string{"FOO": "OJSTER-1:AAA:BBB"}
+		reqBody, _ := json.Marshal(reqBodyMap)
+
+		rec := runPost(t, reqBody, nil, "/nonexistent/priv.b64")
+		ExpectStatus(t, rec, http.StatusInternalServerError)
+		ExpectBodyContains(t, rec, "failed to read private key file")
+	})
+
+	t.Run("malformed sealed value -> 502", func(t *testing.T) {
+		// Create a real keypair and a sealed value, then corrupt it so unseal fails.
+		td := t.TempDir()
+		priv := filepath.Join(td, "priv.b64")
+		pub := filepath.Join(td, "pub.b64")
+		envFile := filepath.Join(td, "sealed.env")
+
+		var outBuf, errBuf bytes.Buffer
+		if code := pqc.KeypairWithPaths(priv, pub, &outBuf, &errBuf); code != 0 {
+			t.Fatalf("KeypairWithPaths failed: code=%d stderr=%q", code, errBuf.String())
+		}
+
+		if code := pqc.SealWithPlaintext(pub, envFile, "FOO", []byte("v"), &outBuf, &errBuf); code != 0 {
+			t.Fatalf("SealWithPlaintext failed: code=%d stderr=%q", code, errBuf.String())
+		}
+
+		// Read the sealed value and corrupt it (remove separator)
+		b, err := os.ReadFile(envFile)
+		if err != nil {
+			t.Fatalf("read sealed env file: %v", err)
+		}
+		line := string(bytes.TrimSpace(b))
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			t.Fatalf("unexpected sealed env format: %q", line)
+		}
+		// create malformed sealed value (prefix + single part)
+		malformed := pqc.Prefix + "onlyonepart"
+		reqBodyMap := map[string]string{"FOO": malformed}
+		reqBody, _ := json.Marshal(reqBodyMap)
+
+		rec := runPost(t, reqBody, nil, priv)
+		ExpectStatus(t, rec, http.StatusBadGateway)
+		ExpectBodyContains(t, rec, "sealed value for FOO malformed")
+	})
+}
+
+func TestHandlePost_DirectUnsealPath_SimulatedBranches(t *testing.T) {
+	orig := unsealMapFunc
+	defer func() { unsealMapFunc = orig }()
+
+	t.Run("unseal returned unexpected keys -> 502", func(t *testing.T) {
+		// Simulate UnsealMap returning an extra key not requested
+		unsealMapFunc = func(envMap map[string]string, privPath string, keys []string) (map[string]string, error) {
+			// return a map with an unexpected key "BAD"
+			return map[string]string{"GOOD": "v", "BAD": "x"}, nil
+		}
+
+		body := []byte(`{"GOOD":"v"}`)
+		rec := runPost(t, body, nil, "/tmp/key")
+		ExpectStatus(t, rec, http.StatusBadGateway)
+		ExpectBodyContains(t, rec, "unseal returned unexpected keys")
+	})
+
+	t.Run("unseal produced no acceptable env entries -> 502", func(t *testing.T) {
+		// Simulate UnsealMap returning an empty map (no sealed entries)
+		unsealMapFunc = func(envMap map[string]string, privPath string, keys []string) (map[string]string, error) {
+			return map[string]string{}, nil
+		}
+
+		body := []byte(`{"FOO":"plainvalue"}`)
+		rec := runPost(t, body, nil, "/tmp/key")
+		ExpectStatus(t, rec, http.StatusBadGateway)
+		ExpectBodyContains(t, rec, "unseal produced no acceptable env entries")
+	})
+
+	t.Run("unseal missing keys -> 502", func(t *testing.T) {
+		// Simulate UnsealMap returning ErrMissingKeys
+		unsealMapFunc = func(envMap map[string]string, privPath string, keys []string) (map[string]string, error) {
+			return nil, fmt.Errorf("%w: missing", pqc.ErrMissingKeys)
+		}
+
+		body := []byte(`{"FOO":"v"}`)
+		rec := runPost(t, body, nil, "/tmp/key")
+		ExpectStatus(t, rec, http.StatusBadGateway)
+		ExpectBodyContains(t, rec, "missing")
+	})
+
+	t.Run("unseal unknown worker error -> 502", func(t *testing.T) {
+		// Simulate UnsealMap returning ErrUnseal
+		unsealMapFunc = func(envMap map[string]string, privPath string, keys []string) (map[string]string, error) {
+			return nil, fmt.Errorf("%w: decapsulation failed", pqc.ErrUnseal)
+		}
+
+		body := []byte(`{"FOO":"v"}`)
+		rec := runPost(t, body, nil, "/tmp/key")
+		ExpectStatus(t, rec, http.StatusBadGateway)
+		ExpectBodyContains(t, rec, "decapsulation failed")
+	})
 }
