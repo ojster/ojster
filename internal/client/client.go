@@ -65,7 +65,7 @@ func Run(nextArgs []string, outw io.Writer, errw io.Writer) int {
 		return 2
 	}
 
-	fmt.Fprintln(errw, "ojster run")
+	fmt.Fprintln(outw, "ojster run")
 
 	socketPath := file.GetSocketPath()
 
