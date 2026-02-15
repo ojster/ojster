@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/ojster/ojster/internal/common"
+	"github.com/ojster/ojster/internal/util/env"
 )
 
 // Assign functions to vars so tests can override them
@@ -51,7 +52,7 @@ func handlePost(w http.ResponseWriter, r *http.Request, cmd []string, privateKey
 			return
 		}
 		requestedKeys[k] = struct{}{}
-		lines = append(lines, k+"="+dotenvEscape(v))
+		lines = append(lines, env.FormatEnvEntry(k, v))
 	}
 
 	tmpDir, err := os.MkdirTemp("", "ojster-")
@@ -61,7 +62,13 @@ func handlePost(w http.ResponseWriter, r *http.Request, cmd []string, privateKey
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	if err := os.WriteFile(filepath.Join(tmpDir, ".env"), joinLines(lines), 0600); err != nil {
+	// Write .env using the formatted lines (ensure trailing newline)
+	envPath := filepath.Join(tmpDir, ".env")
+	s := strings.Join(lines, "\n")
+	if !strings.HasSuffix(s, "\n") {
+		s += "\n"
+	}
+	if err := os.WriteFile(envPath, []byte(s), 0600); err != nil {
 		http.Error(w, "failed to write .env file: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -136,18 +143,4 @@ func readJSON(r io.Reader, maxBytes int64, v any) error {
 		return fmt.Errorf("invalid JSON: %v", err)
 	}
 	return nil
-}
-
-func joinLines(lines []string) []byte {
-	s := strings.Join(lines, "\n")
-	if !strings.HasSuffix(s, "\n") {
-		s += "\n"
-	}
-	return []byte(s)
-}
-
-func dotenvEscape(s string) string {
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, `'`, `\'`)
-	return "'" + s + "'"
 }
