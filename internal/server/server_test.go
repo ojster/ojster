@@ -120,7 +120,7 @@ func TestServe_TmpfsFailure_StatfsError(t *testing.T) {
 // ─────────────────────────────────────────────────────────────
 //
 
-func TestServe_StartupAndHealth(t *testing.T) {
+func TestServe_Startup(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -143,12 +143,12 @@ func TestServe_StartupAndHealth(t *testing.T) {
 
 	client := getUnixHTTPClient(socketPath)
 
-	resp, err := client.Get("http://unix/health")
+	resp, err := client.Get("http://unix/")
 	if err != nil {
-		t.Fatalf("GET /health failed: %v", err)
+		t.Fatalf("GET / failed: %v", err)
 	}
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 OK, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", resp.StatusCode)
 	}
 	resp.Body.Close()
 

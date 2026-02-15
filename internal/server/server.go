@@ -73,10 +73,7 @@ func Serve(ctx context.Context, cmdArgs []string, outw io.Writer, errw io.Writer
 	}
 
 	mux := http.NewServeMux()
-	// health endpoint: accept GET and HEAD
-	mux.HandleFunc("/health", healthHandler)
-	// main POST endpoint
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /", func(w http.ResponseWriter, r *http.Request) {
 		handlePost(w, r, cmd, privateKeyFile)
 	})
 
