@@ -8,14 +8,14 @@ volumes:
 
 secrets:
   private_key:
-    file: ./.env.keys
+    file: ./ojster_priv.key
 
 services:
 
   # Ojster server: only a single instance required
   ojster:
     container_name: ojster_server
-    image: dotenv/dotenvx         # Dotenvx image as base
+    image: ojster/ojster
     init: true                    # Run tini as PID 1
     user: 64646:64646             # Run as non-root
     cap_drop:
@@ -30,9 +30,7 @@ services:
       - ./bin/ojster:/ojster:ro
     secrets:
       - private_key               # Mount private key
-    entrypoint:
-      - /ojster                   # Run ojster instead of dotenvx
-      - serve
+    command: ["serve"]
     network_mode: none            # Run without network stack
 
   # Example ojster client: integrate as many containers as you like

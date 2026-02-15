@@ -17,3 +17,11 @@ target "test" {
   pull = true
   output = ["./log"]
 }
+
+target "image" {
+  target = "binary-scratch"
+  context = "."
+  dockerfile = "Dockerfile"
+  pull = true
+  output = ["type=image,name=ojster/ojster:latest,load=true"]
+}

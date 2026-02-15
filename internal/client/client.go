@@ -33,7 +33,7 @@ import (
 	"github.com/ojster/ojster/internal/util/file"
 )
 
-const defaultValueRegex = `^'?(encrypted:[A-Za-z0-9+/=]+)'?$`
+const defaultValueRegex = `^'?(OJSTER-1:[A-Za-z0-9+/=:]+)'?$`
 
 // Assign functions to vars so tests can override them
 var (
@@ -43,6 +43,17 @@ var (
 	sleepFunc               = time.Sleep
 	lookPathFunc            = exec.LookPath
 )
+
+// retryWithBackoff logs a formatted message to errw, sleeps for the current backoff,
+// and updates backoff to the next value (capped by maxBackoff).
+func retryWithBackoff(errw io.Writer, backoff *time.Duration, maxBackoff time.Duration, format string, a ...any) {
+	// append the backoff placeholder to the format and the current backoff to args
+	fullFmt := format + " Retrying in %s\n"
+	args := append(a, *backoff)
+	fmt.Fprintf(errw, fullFmt, args...)
+	sleepFunc(*backoff)
+	*backoff = min(*backoff*2, maxBackoff)
+}
 
 // Run performs the client "run" flow and follows the writer/exit-code pattern:
 // - nextArgs are the command and args to exec
@@ -81,18 +92,51 @@ func Run(nextArgs []string, outw io.Writer, errw io.Writer) int {
 	for {
 		respBody, statusCode, err := postMapToServerJSONFunc(socketPath, requestMap)
 
+		// default: we will retry unless we set accept=true
+		accept := false
 		var replyMap map[string]string
-		decodeErr := json.Unmarshal(respBody, &replyMap)
+		var retryFormat string
+		var retryArgs []any
 
-		if isSuccessfulReply(err, statusCode, decodeErr, replyMap, requestedKeys) {
+		// transport-level error -> retry
+		if err != nil {
+			retryFormat = "request failed: %v"
+			retryArgs = []any{err}
+		} else if statusCode < 200 || statusCode >= 300 {
+			// non-2xx -> retry without attempting JSON decode
+			retryFormat = "server returned status=%d body=%q"
+			retryArgs = []any{statusCode, respBody}
+		} else {
+			// 2xx -> attempt JSON decode
+			decodeErr := json.Unmarshal(respBody, &replyMap)
+			if decodeErr != nil {
+				retryFormat = "failed to decode JSON response (status=%d decodeErr=%v)"
+				retryArgs = []any{statusCode, decodeErr}
+			} else {
+				unexpected := false
+				for k := range replyMap {
+					if _, ok := requestedKeys[k]; !ok {
+						unexpected = true
+						break
+					}
+				}
+				if unexpected {
+					retryFormat = "reply contains unexpected keys (status=%d)"
+					retryArgs = []any{statusCode}
+				} else {
+					// success
+					accept = true
+				}
+			}
+		}
+
+		if accept {
 			newEnv = replyMap
 			break
 		}
 
-		// transient error; retry with backoff
-		fmt.Fprintf(errw, "request not successful (status=%d err=%v decodeErr=%v). retrying in %s\n", statusCode, err, decodeErr, backoff)
-		sleepFunc(backoff)
-		backoff = min(backoff*2, maxBackoff)
+		// retry path
+		retryWithBackoff(errw, &backoff, maxBackoff, retryFormat, retryArgs...)
 	}
 
 	mergedEnv := buildExecEnv(newEnv)
@@ -111,22 +155,6 @@ func Run(nextArgs []string, outw io.Writer, errw io.Writer) int {
 	// If execFunc succeeds the process is replaced and this is not reached.
 	// For test stubs that return nil, return success.
 	return 0
-}
-
-func hasUnexpectedKeys(reply map[string]string, requested map[string]struct{}) bool {
-	for k := range reply {
-		if _, ok := requested[k]; !ok {
-			return true
-		}
-	}
-	return false
-}
-
-func isSuccessfulReply(err error, status int, decodeErr error, reply map[string]string, requested map[string]struct{}) bool {
-	return err == nil &&
-		status >= 200 && status < 300 &&
-		decodeErr == nil &&
-		!hasUnexpectedKeys(reply, requested)
 }
 
 // filterEnvByValue returns a map of env key->value for entries whose value matches OJSTER_REGEX.

@@ -59,7 +59,7 @@ func waitForServer(t *testing.T, socketPath string) {
 	client := &http.Client{Transport: tr, Timeout: 100 * time.Millisecond}
 
 	for time.Now().Before(deadline) {
-		req, _ := http.NewRequest("GET", "http://unix/health", nil)
+		req, _ := http.NewRequest("GET", "http://unix/", nil)
 		resp, err := client.Do(req)
 		if err == nil {
 			resp.Body.Close()

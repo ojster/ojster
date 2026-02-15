@@ -53,7 +53,7 @@ func loggingMiddleware(next http.Handler) http.Handler {
 // It writes informational and error messages to the provided writers and returns an
 // integer exit code suitable for passing to os.Exit by the caller.
 func Serve(ctx context.Context, cmdArgs []string, outw io.Writer, errw io.Writer) int {
-	defaultCmd := []string{"dotenvx", "get", "-o"}
+	defaultCmd := []string{"/ojster", "unseal", "-json", "-priv-file", "./.env.keys"}
 	cmd := defaultCmd
 	if len(cmdArgs) > 0 {
 		cmd = cmdArgs

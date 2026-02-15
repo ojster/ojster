@@ -117,10 +117,10 @@ func TestFilterEnvByValue(t *testing.T) {
 		t.Setenv("OJSTER_REGEX", "")
 
 		env := []string{
-			"GOOD=encrypted:ABC123",
-			"WRAPPED='encrypted:XYZ'",
+			"GOOD=OJSTER-1:ABC123",
+			"WRAPPED='OJSTER-1:XYZ'",
 			"BAD=plain",
-			"INVALID-NAME=encrypted:ABC",
+			"INVALID-NAME=OJSTER-1:ABC",
 		}
 
 		out, err := filterEnvByValue(env)
@@ -215,13 +215,13 @@ func TestRun_BasicFlow(t *testing.T) {
 	t.Cleanup(func() { postMapToServerJSONFunc = oldPost })
 
 	postMapToServerJSONFunc = func(socketPath string, m map[string]string) ([]byte, int, error) {
-		if len(m) != 1 || m["SECRET"] != "encrypted:ABC" {
+		if len(m) != 1 || m["SECRET"] != "OJSTER-1:ABC" {
 			t.Fatalf("unexpected request map: %#v", m)
 		}
 		return []byte(`{"SECRET":"decrypted"}`), 200, nil
 	}
 
-	t.Setenv("SECRET", "encrypted:ABC")
+	t.Setenv("SECRET", "OJSTER-1:ABC")
 	t.Setenv("PLAIN", "hello")
 
 	var outBuf bytes.Buffer
@@ -305,7 +305,7 @@ func TestRun_RetryScenarios(t *testing.T) {
 				return resp, code, nil
 			}
 
-			t.Setenv("SECRET", "encrypted:ABC")
+			t.Setenv("SECRET", "OJSTER-1:ABC")
 
 			var outBuf bytes.Buffer
 			var errBuf bytes.Buffer
@@ -357,7 +357,7 @@ func TestRun_Error_ExecNotFound(t *testing.T) {
 		return []byte(`{"SECRET":"ok"}`), 200, nil
 	}
 
-	t.Setenv("SECRET", "encrypted:ABC")
+	t.Setenv("SECRET", "OJSTER-1:ABC")
 
 	var outBuf bytes.Buffer
 	var errBuf bytes.Buffer

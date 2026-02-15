@@ -28,10 +28,6 @@ EOF
 # ============================================
 FROM builder AS test
 
-# Add dotenvx, required by tests
-COPY --from=dotenv/dotenvx  \
-    /usr/local/bin/dotenvx /usr/local/bin/dotenvx
-
 WORKDIR /tmp2
 WORKDIR /app
 
@@ -68,3 +64,4 @@ RUN --network=none go build \
 # ============================================
 FROM scratch AS binary-scratch
 COPY --from=binary /app/ojster /ojster
+ENTRYPOINT [ "/ojster" ]

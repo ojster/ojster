@@ -1,0 +1,21 @@
+secrets:
+  private_key:
+    file: ./.env.keys
+
+services:
+
+  ojster:
+    image: dotenv/dotenvx         # Dotenvx image as base
+    volumes:
+      - ./bin/ojster:/ojster:ro   # Mount the ojster binary
+    entrypoint:
+      - /ojster                   # Run ojster instead of dotenvx
+      - serve
+    command:                      # Use dotenvx for decryption instead of ojster
+      - dotenvx
+      - get
+      - -o
+
+  client:
+    environment:                  # Set the regex to the pattern used by dotenvx
+      - OJSTER_REGEX=^'?(encrypted:[A-Za-z0-9+/=]+)'?$

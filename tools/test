@@ -31,9 +31,10 @@ LOG_DIR="log"
 # CLEANUP TRAP
 # ----------------------------------------
 cleanup() {
-    echo -e "${YELLOW}${BOLD}→ Cleanup: clear .env and .env.keys…${RESET}"
+    echo -e "${YELLOW}${BOLD}→ Cleanup: clear .env and ojster keys…${RESET}"
     echo '' > .env
-    [ -f .env.keys ] && rm .env.keys
+    [ -f ojster_pub.key ] && rm ojster_pub.key
+    [ -f ojster_priv.key ] && rm ojster_priv.key
 
     echo -e "${YELLOW}${BOLD}→ Cleanup: stopping docker compose…${RESET}"
     docker compose down >/dev/null 2>&1 || true
@@ -65,12 +66,6 @@ clean_and_preserve_readme() {
 
 clean_and_preserve_readme "$BIN_DIR"
 clean_and_preserve_readme "$LOG_DIR"
-
-# ----------------------------------------
-# CREATE .env
-# ----------------------------------------
-echo -e "${YELLOW}${BOLD}→ Creating .env…${RESET}"
-echo "EXAMPLE1=1234" > .env
 
 # ----------------------------------------
 # DOCKER BAKE TEST
@@ -124,27 +119,39 @@ fi
 # ----------------------------------------
 echo -e "${YELLOW}${BOLD}→ Running docker bake…${RESET}"
 docker bake
+docker bake image
 
 # ----------------------------------------
-# ENCRYPT .env
+# CREATE .env
 # ----------------------------------------
-echo -e "${YELLOW}${BOLD}→ Encrypting .env…${RESET}"
+echo -e "${YELLOW}${BOLD}→ Creating .env…${RESET}"
+echo "EXAMPLE1=1234" > .env
 
-docker run -it --rm \
+docker run --rm \
     -v "$REPO_ROOT":/app \
     --workdir=/app \
-    --pull=always \
+    --pull=never \
     -u=64646:64646 \
     --cap-drop=ALL \
     --network=none \
     --security-opt=no-new-privileges=true \
-    dotenv/dotenvx encrypt
+    ojster/ojster keypair
+
+echo -n '1234' | docker run -i --rm \
+    -v "$REPO_ROOT":/app \
+    --workdir=/app \
+    --pull=never \
+    -u=64646:64646 \
+    --cap-drop=ALL \
+    --network=none \
+    --security-opt=no-new-privileges=true \
+    ojster/ojster seal EXAMPLE
 
 # ----------------------------------------
 # VERIFY .env ENCRYPTED
 # ----------------------------------------
 echo -e "${YELLOW}${BOLD}→ Checking .env contains encrypted value…${RESET}"
-if ! grep -q "=encrypted:" .env; then
+if ! grep -q "=OJSTER-1:" .env; then
     echo -e "${RED}${BOLD}ERROR:${RESET} .env does not contain encrypted value"
     exit 1
 fi
