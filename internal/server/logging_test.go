@@ -18,8 +18,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/ojster/ojster/internal/testutil"
 )
 
 func TestLoggingMiddleware(t *testing.T) {
@@ -38,5 +36,5 @@ func TestLoggingMiddleware(t *testing.T) {
 	if !called {
 		t.Fatalf("handler not called")
 	}
-	testutil.ExpectStatus(t, rec, http.StatusTeapot)
+	ExpectStatus(t, rec, http.StatusTeapot)
 }

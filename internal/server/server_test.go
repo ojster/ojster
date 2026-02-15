@@ -32,6 +32,13 @@ import (
 // ─────────────────────────────────────────────────────────────
 //
 
+func ExpectStatus(t *testing.T, rec *httptest.ResponseRecorder, want int) {
+	t.Helper()
+	if rec.Code != want {
+		t.Fatalf("expected %d, got %d (%s)", want, rec.Code, rec.Body.String())
+	}
+}
+
 func runPost(t *testing.T, body []byte, cmd []string, priv string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest("POST", "/", bytes.NewReader(body))

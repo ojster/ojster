@@ -15,12 +15,11 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/ojster/ojster/internal/testutil"
 )
 
 //
@@ -48,9 +47,13 @@ func TestHandlePost_Success(t *testing.T) {
 	body := []byte(`{"FOO":"bar"}`)
 	cmd := Sh(`printf '{"FOO":"ok"}'`)
 	rec := runPost(t, body, cmd, "/tmp/key")
-	testutil.ExpectStatus(t, rec, http.StatusOK)
+	ExpectStatus(t, rec, http.StatusOK)
 
-	out := testutil.DecodeJSON[map[string]string](t, rec.Body.Bytes())
+	var out map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
 	if out["FOO"] != "ok" {
 		t.Fatalf("expected FOO=ok, got %#v", out)
 	}
@@ -76,7 +79,7 @@ func TestHandlePost_Errors(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := runPost(t, []byte(tc.body), tc.cmd, "/x")
-			testutil.ExpectStatus(t, rec, tc.wantCode)
+			ExpectStatus(t, rec, tc.wantCode)
 			ExpectBodyContains(t, rec, tc.wantSub)
 		})
 	}

@@ -19,8 +19,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/ojster/ojster/internal/testutil"
 )
 
 func TestHealthHandler_OK(t *testing.T) {
@@ -28,7 +26,7 @@ func TestHealthHandler_OK(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	healthHandler(rec, req)
-	testutil.ExpectStatus(t, rec, http.StatusOK)
+	ExpectStatus(t, rec, http.StatusOK)
 
 	var m map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {

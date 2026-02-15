@@ -16,6 +16,7 @@ package client
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
@@ -25,8 +26,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/ojster/ojster/internal/testutil"
 )
 
 //
@@ -378,7 +377,10 @@ func TestRun_Error_ExecNotFound(t *testing.T) {
 func TestPostMapToServerJSON(t *testing.T) {
 	socketPath, closeSrv := startUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		m := testutil.DecodeJSON[map[string]string](t, body)
+		m := map[string]string{}
+		if err := json.Unmarshal(body, &m); err != nil {
+			t.Fatalf("invalid JSON: %v", err)
+		}
 		if m["A"] != "1" {
 			t.Fatalf("expected A=1")
 		}

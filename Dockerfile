@@ -39,8 +39,7 @@ WORKDIR /app
 RUN --network=none --mount=type=tmpfs,target=/tmp <<EOF
     set -o pipefail
     mkdir output
-    go test $(go list ./... | grep -v internal/testutil | grep -v cmd/ojster) \
-        -v -coverprofile=output/coverage.out \
+    go test ./... -v -coverprofile=output/coverage.out \
         -ldflags="-X main.version=$(cat vers)" \
         | tee output/test.log
     go tool cover -html=output/coverage.out -o output/coverage.html
