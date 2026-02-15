@@ -58,21 +58,21 @@ func handlePost(w http.ResponseWriter, r *http.Request, cmdArgs []string, privat
 		requestedKeys[k] = struct{}{}
 	}
 
-	// If no cmdArgs were provided, call UnsealFromJSON directly.
+	// If no cmdArgs were provided, call UnsealMap directly.
 	if len(cmdArgs) == 0 {
-		var outBuf, errBuf bytes.Buffer
-		// UnsealFromJSON expects the env map first, then privPath.
-		code := pqc.UnsealFromJSON(incoming, privateKeyFile, nil, true, &outBuf, &errBuf)
+		outMap, code, errMsg := pqc.UnsealMap(incoming, privateKeyFile, nil)
 		if code != 0 {
-			// Mirror previous subprocess behavior: non-zero -> Bad Gateway
-			http.Error(w, strings.TrimSpace(errBuf.String()), http.StatusBadGateway)
-			return
-		}
-
-		// Parse JSON output from UnsealFromJSON
-		var outMap map[string]string
-		if err := json.Unmarshal(outBuf.Bytes(), &outMap); err != nil {
-			http.Error(w, "unseal produced invalid JSON", http.StatusBadGateway)
+			// Map pqc exit codes to HTTP status:
+			// 1 -> internal worker failure (502), but if errMsg indicates server config (missing key file) treat as 500.
+			// 2 -> missing keys (treat as 502 since worker couldn't produce requested keys).
+			// For now follow previous behavior: non-zero -> 502, but prefer 500 for private-key read errors.
+			if strings.Contains(errMsg, "failed to read private key file") ||
+				strings.Contains(errMsg, "invalid base64 private key") ||
+				strings.Contains(errMsg, "invalid private key") {
+				http.Error(w, errMsg, http.StatusInternalServerError)
+				return
+			}
+			http.Error(w, errMsg, http.StatusBadGateway)
 			return
 		}
 

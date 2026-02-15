@@ -15,6 +15,7 @@
 package pqc
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/mlkem"
@@ -229,18 +230,24 @@ func loadDecapsulationKey(privPath string, errw io.Writer) (*mlkem.Decapsulation
 	return dk, 0
 }
 
-// UnsealFromJSON accepts an env map (map[string]string) parsed from JSON,
-// reads the private key at privPath, and performs the same unsealing logic as UnsealFromFiles.
-// The envMap should be the same shape as ParseEnvFile output (key -> raw logical value).
-// Returns an exit code and writes errors to errw.
-func UnsealFromJSON(envMap map[string]string, privPath string, keys []string, jsonOut bool, outw io.Writer, errw io.Writer) int {
-	dk, code := loadDecapsulationKey(privPath, errw)
+// UnsealMap decrypts the provided envMap using the private key at privPath.
+// It returns the decrypted map (only keys that were successfully decrypted), an exit code,
+// and a textual error message (stderr) if non-zero code. Exit codes match UnsealFromFiles:
+// 0 success, 1 error, 2 missing keys.
+func UnsealMap(envMap map[string]string, privPath string, keys []string) (map[string]string, int, string) {
+	// capture stderr from loadDecapsulationKey
+	var errBuf bytes.Buffer
+	dk, code := loadDecapsulationKey(privPath, &errBuf)
 	if code != 0 {
-		return code
+		return nil, code, strings.TrimSpace(errBuf.String())
 	}
 
-	// Use a placeholder path string for error messages when needed
-	return unsealCore(envMap, dk, keys, jsonOut, outw, errw, "<json input>")
+	decrypted, _, code, msg := decryptCore(envMap, dk, keys, "<map input>")
+	if code != 0 {
+		// return the message so callers can decide HTTP status mapping
+		return nil, code, msg
+	}
+	return decrypted, 0, ""
 }
 
 // UnsealFromFiles reads the env file at inPath and the private key at privPath,
@@ -263,10 +270,10 @@ func UnsealFromFiles(inPath, privPath string, keys []string, jsonOut bool, outw 
 	return unsealCore(envMap, dk, keys, jsonOut, outw, errw, inPath)
 }
 
-// unsealCore contains the shared logic for selecting keys, validating presence,
-// decapsulating, decrypting, and writing output. It returns the same exit codes
-// as the original UnsealFromFiles: 0 success, 1 error, 2 missing keys.
-func unsealCore(envMap map[string]string, dk *mlkem.DecapsulationKey768, keys []string, jsonOut bool, outw io.Writer, errw io.Writer, sourceDesc string) int {
+// decryptCore performs the core selection/validation/decapsulation/decryption.
+// It returns the decrypted map, the resolved keys slice (in deterministic order),
+// an exit code, and an error message string (if non-zero code).
+func decryptCore(envMap map[string]string, dk *mlkem.DecapsulationKey768, keys []string, sourceDesc string) (map[string]string, []string, int, string) {
 	// If no keys provided, select all keys whose stored value starts with the sealed prefix
 	if len(keys) == 0 {
 		for k, v := range envMap {
@@ -276,8 +283,8 @@ func unsealCore(envMap map[string]string, dk *mlkem.DecapsulationKey768, keys []
 		}
 		sort.Strings(keys)
 		if len(keys) == 0 {
-			// No sealed entries is not an error; write nothing and return success.
-			return 0
+			// No sealed entries is not an error; return empty map and success.
+			return map[string]string{}, keys, 0, ""
 		}
 	}
 
@@ -289,8 +296,8 @@ func unsealCore(envMap map[string]string, dk *mlkem.DecapsulationKey768, keys []
 		}
 	}
 	if len(missing) > 0 {
-		fmt.Fprintln(errw, fmt.Errorf("missing keys in %s: %s", sourceDesc, strings.Join(missing, ", ")))
-		return 2
+		msg := fmt.Sprintf("missing keys in %s: %s", sourceDesc, strings.Join(missing, ", "))
+		return nil, nil, 2, msg
 	}
 
 	// Collect decrypted values
@@ -299,46 +306,57 @@ func unsealCore(envMap map[string]string, dk *mlkem.DecapsulationKey768, keys []
 	for _, k := range keys {
 		stored := envMap[k]
 		if !strings.HasPrefix(stored, prefix) {
-			fmt.Fprintln(errw, fmt.Errorf("value for %s does not appear to be sealed (missing prefix)", k))
-			return 1
+			msg := fmt.Sprintf("value for %s does not appear to be sealed (missing prefix)", k)
+			return nil, nil, 1, msg
 		}
 		payload := strings.TrimPrefix(stored, prefix)
 		parts := strings.SplitN(payload, sep, 2)
 		if len(parts) != 2 {
-			fmt.Fprintln(errw, fmt.Errorf("sealed value for %s malformed", k))
-			return 1
+			msg := fmt.Sprintf("sealed value for %s malformed", k)
+			return nil, nil, 1, msg
 		}
 		mlkemB64 := parts[0]
 		gcmB64 := parts[1]
 
 		mlkemCiphertext, err := base64.StdEncoding.DecodeString(mlkemB64)
 		if err != nil {
-			fmt.Fprintln(errw, fmt.Errorf("invalid base64 mlkem ciphertext for %s: %w", k, err))
-			return 1
+			msg := fmt.Sprintf("invalid base64 mlkem ciphertext for %s: %v", k, err)
+			return nil, nil, 1, msg
 		}
 		gcmBlob, err := base64.StdEncoding.DecodeString(gcmB64)
 		if err != nil {
-			fmt.Fprintln(errw, fmt.Errorf("invalid base64 gcm blob for %s: %w", k, err))
-			return 1
+			msg := fmt.Sprintf("invalid base64 gcm blob for %s: %v", k, err)
+			return nil, nil, 1, msg
 		}
 
 		sharedKey, err := dk.Decapsulate(mlkemCiphertext)
 		if err != nil {
-			fmt.Fprintln(errw, fmt.Errorf("decapsulation failed for %s: %w", k, err))
-			return 1
+			msg := fmt.Sprintf("decapsulation failed for %s: %v", k, err)
+			return nil, nil, 1, msg
 		}
 		if len(sharedKey) != mlkem.SharedKeySize {
-			fmt.Fprintln(errw, fmt.Errorf("unexpected shared key size for %s: %d", k, len(sharedKey)))
-			return 1
+			msg := fmt.Sprintf("unexpected shared key size for %s: %d", k, len(sharedKey))
+			return nil, nil, 1, msg
 		}
 
 		plaintext, err := decryptAESGCM(sharedKey, gcmBlob)
 		if err != nil {
-			fmt.Fprintln(errw, fmt.Errorf("decryption failed for %s: %w", k, err))
-			return 1
+			msg := fmt.Sprintf("decryption failed for %s: %v", k, err)
+			return nil, nil, 1, msg
 		}
 
 		decrypted[k] = string(plaintext)
+	}
+
+	// Return decrypted map and the resolved keys (in the order we processed them)
+	return decrypted, keys, 0, ""
+}
+
+func unsealCore(envMap map[string]string, dk *mlkem.DecapsulationKey768, keys []string, jsonOut bool, outw io.Writer, errw io.Writer, sourceDesc string) int {
+	decrypted, resolvedKeys, code, msg := decryptCore(envMap, dk, keys, sourceDesc)
+	if code != 0 {
+		fmt.Fprintln(errw, msg)
+		return code
 	}
 
 	// Build output
@@ -350,9 +368,9 @@ func unsealCore(envMap map[string]string, dk *mlkem.DecapsulationKey768, keys []
 		return 0
 	}
 
-	// .env-safe lines
+	// .env-safe lines: preserve the resolvedKeys ordering (matches original behavior)
 	var b strings.Builder
-	for _, k := range keys {
+	for _, k := range resolvedKeys {
 		b.WriteString(env.FormatEnvEntry(k, decrypted[k]))
 		b.WriteByte('\n')
 	}
