@@ -36,7 +36,7 @@ import (
 )
 
 const (
-	nonceSizeGCM    = 12 // TODO: decide if this size is sufficient
+	nonceSizeGCM    = 12
 	defaultPrivFile = "ojster_priv.key"
 	defaultPubFile  = "ojster_pub.key"
 	Prefix          = "OJSTER-1:"
