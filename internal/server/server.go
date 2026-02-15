@@ -41,6 +41,14 @@ func checkTempIsTmpfs(path string) error {
 	return nil
 }
 
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		next.ServeHTTP(w, r)
+		fmt.Fprintf(os.Stderr, "%s %s %s\n", r.Method, r.URL.Path, time.Since(start))
+	})
+}
+
 // Serve starts the HTTP server and blocks until the server stops or ctx is cancelled.
 // It writes informational and error messages to the provided writers and returns an
 // integer exit code suitable for passing to os.Exit by the caller.
