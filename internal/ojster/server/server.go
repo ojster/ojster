@@ -62,8 +62,6 @@ func Serve(ctx context.Context, cmdArgs []string) {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", healthHandler)
-	mux.HandleFunc("HEAD /health", healthHandler)
 	mux.HandleFunc("POST /", func(w http.ResponseWriter, r *http.Request) {
 		handlePost(w, r, cmd, privateKeyFile)
 	})
