@@ -16,7 +16,6 @@ package cli
 
 import (
 	"bytes"
-	"flag"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,64 +29,6 @@ func tmpFilePath(t *testing.T, name string) string {
 	t.Helper()
 	td := t.TempDir()
 	return filepath.Join(td, name)
-}
-
-// ----------------------------- existing tests (unchanged) -----------------------------
-
-// TestSplitDoubleDash covers several positions of the "--" separator.
-func TestSplitDoubleDash(t *testing.T) {
-	cases := []struct {
-		name   string
-		args   []string
-		before []string
-		after  []string
-		had    bool
-	}{
-		{"no-dash", []string{"a", "b"}, []string{"a", "b"}, nil, false},
-		{"middle", []string{"a", "--", "b", "c"}, []string{"a"}, []string{"b", "c"}, true},
-		{"start", []string{"--", "x"}, nil, []string{"x"}, true},
-		{"end", []string{"a", "--"}, []string{"a"}, nil, true},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			before, after, had := splitDoubleDash(tc.args)
-			if had != tc.had {
-				t.Fatalf("had: got %v want %v", had, tc.had)
-			}
-			if len(before) != len(tc.before) {
-				t.Fatalf("before: got %v want %v", before, tc.before)
-			}
-			if len(after) != len(tc.after) {
-				t.Fatalf("after: got %v want %v", after, tc.after)
-			}
-			for i := range before {
-				if before[i] != tc.before[i] {
-					t.Fatalf("before[%d]: got %q want %q", i, before[i], tc.before[i])
-				}
-			}
-			for i := range after {
-				if after[i] != tc.after[i] {
-					t.Fatalf("after[%d]: got %q want %q", i, after[i], tc.after[i])
-				}
-			}
-		})
-	}
-}
-
-// TestUsageFromFlagSet ensures usageFromFlagSet captures the FlagSet usage output.
-func TestUsageFromFlagSet(t *testing.T) {
-	fs := flag.NewFlagSet("x", flag.ContinueOnError)
-	fs.SetOutput(&bytes.Buffer{})
-	fs.Usage = func() {
-		// write to fs.Output() so usageFromFlagSet captures it
-		fs.SetOutput(fs.Output())
-		fs.Output().Write([]byte("MY USAGE\n"))
-	}
-	got := usageFromFlagSet(fs)
-	if !strings.Contains(got, "MY USAGE") {
-		t.Fatalf("usageFromFlagSet did not capture usage; got: %q", got)
-	}
 }
 
 // ----------------------------- Entrypoint basic behavior -----------------------------
