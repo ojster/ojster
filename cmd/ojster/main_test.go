@@ -36,13 +36,13 @@ func tmpFilePath(t *testing.T, name string) string {
 // TestEntrypoint_NoArgs prints header and returns 0.
 func TestEntrypoint_NoArgs(t *testing.T) {
 	var out, errb bytes.Buffer
-	hdr := "HDR"
-	code := entrypoint("ojster", []string{}, "v1.2.3", hdr, &out, &errb)
+	code := entrypoint("ojster", []string{}, "v1.2.3", &out, &errb)
 	if code != 0 {
 		t.Fatalf("entrypoint returned code %d; want 0", code)
 	}
-	if out.String() != hdr {
-		t.Fatalf("entrypoint output mismatch; got %q", out.String())
+	// top-level help now composes header + commands; assert header is present
+	if !strings.Contains(out.String(), header) {
+		t.Fatalf("entrypoint output missing header; got %q", out.String())
 	}
 	if errb.Len() != 0 {
 		t.Fatalf("expected no stderr; got %q", errb.String())
@@ -52,21 +52,20 @@ func TestEntrypoint_NoArgs(t *testing.T) {
 // TestEntrypoint_Help prints header and returns 0.
 func TestEntrypoint_Help(t *testing.T) {
 	var out, errb bytes.Buffer
-	hdr := "HDR"
-	code := entrypoint("ojster", []string{"help"}, "v", hdr, &out, &errb)
+	code := entrypoint("ojster", []string{"help"}, "v", &out, &errb)
 	if code != 0 {
 		t.Fatalf("entrypoint(help) returned %d; want 0", code)
 	}
-	if out.String() != hdr {
-		t.Fatalf("help output mismatch; got %q", out.String())
+	// top-level help now composes header + commands; assert header is present
+	if !strings.Contains(out.String(), header) {
+		t.Fatalf("help output missing header; got %q", out.String())
 	}
 }
 
 // TestEntrypoint_Version prints version and returns 0.
 func TestEntrypoint_Version(t *testing.T) {
 	var out, errb bytes.Buffer
-	hdr := "HDR"
-	code := entrypoint("ojster", []string{"version"}, "VER-XYZ", hdr, &out, &errb)
+	code := entrypoint("ojster", []string{"version"}, "VER-XYZ", &out, &errb)
 	if code != 0 {
 		t.Fatalf("entrypoint(version) returned %d; want 0", code)
 	}
@@ -78,12 +77,12 @@ func TestEntrypoint_Version(t *testing.T) {
 // TestEntrypoint_Unknown prints header, writes error and returns 1.
 func TestEntrypoint_Unknown(t *testing.T) {
 	var out, errb bytes.Buffer
-	hdr := "HDR"
-	code := entrypoint("ojster", []string{"nope"}, "v", hdr, &out, &errb)
+	code := entrypoint("ojster", []string{"nope"}, "v", &out, &errb)
 	if code != 1 {
 		t.Fatalf("entrypoint(unknown) returned %d; want 1", code)
 	}
-	if out.String() != hdr {
+	// top-level help should be printed on stdout
+	if !strings.Contains(out.String(), header) {
 		t.Fatalf("expected header on stdout; got %q", out.String())
 	}
 	if !strings.Contains(errb.String(), "unknown subcommand: nope") {
@@ -100,7 +99,7 @@ func TestHandleKeypair_Help(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("handleKeypair -h returned %d; want 0", code)
 	}
-	if !strings.Contains(out.String(), "Usage: ojster keypair") {
+	if !strings.Contains(out.String(), "ojster keypair") {
 		t.Fatalf("expected keypair usage; got %q", out.String())
 	}
 }
@@ -124,7 +123,7 @@ func TestHandleUnseal_Help(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("handleUnseal -h returned %d; want 0", code)
 	}
-	if !strings.Contains(out.String(), "Usage: ojster unseal") {
+	if !strings.Contains(out.String(), "ojster unseal") {
 		t.Fatalf("expected unseal usage; got %q", out.String())
 	}
 }
@@ -136,7 +135,7 @@ func TestHandleRun_Help(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("handleRun -h returned %d; want 0", code)
 	}
-	if !strings.Contains(out.String(), "Usage: ojster run") {
+	if !strings.Contains(out.String(), "ojster run") {
 		t.Fatalf("expected run usage; got %q", out.String())
 	}
 }
@@ -148,7 +147,7 @@ func TestHandleServe_Help(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("handleServe -h returned %d; want 0", code)
 	}
-	if !strings.Contains(out.String(), "Usage: ojster serve") {
+	if !strings.Contains(out.String(), "ojster serve") {
 		t.Fatalf("expected serve usage; got %q", out.String())
 	}
 }
@@ -158,8 +157,6 @@ func TestHandleServe_Help(t *testing.T) {
 // TestEntrypoint_SubcommandDispatch verifies entrypoint dispatches to the correct handlers.
 // For most handlers we use the -h help flag so the handler returns quickly without side effects.
 func TestEntrypoint_SubcommandDispatch(t *testing.T) {
-	hdr := "HDR"
-
 	cases := []struct {
 		name            string
 		prog            string
@@ -173,7 +170,7 @@ func TestEntrypoint_SubcommandDispatch(t *testing.T) {
 			prog:            "ojster",
 			args:            []string{"help"},
 			wantCode:        0,
-			wantOutContains: hdr,
+			wantOutContains: header,
 		},
 		{
 			name:            "version",
@@ -187,49 +184,49 @@ func TestEntrypoint_SubcommandDispatch(t *testing.T) {
 			prog:            "ojster",
 			args:            []string{"keypair", "-h"},
 			wantCode:        0,
-			wantOutContains: "Usage: ojster keypair",
+			wantOutContains: "ojster keypair",
 		},
 		{
 			name:            "run help",
 			prog:            "ojster",
 			args:            []string{"run", "-h"},
 			wantCode:        0,
-			wantOutContains: "Usage: ojster run",
+			wantOutContains: "ojster run",
 		},
 		{
 			name:            "seal help",
 			prog:            "ojster",
 			args:            []string{"seal", "-h"},
 			wantCode:        0,
-			wantOutContains: "Usage: ojster seal",
+			wantOutContains: "ojster seal",
 		},
 		{
 			name:            "serve help",
 			prog:            "ojster",
 			args:            []string{"serve", "-h"},
 			wantCode:        0,
-			wantOutContains: "Usage: ojster serve",
+			wantOutContains: "ojster serve",
 		},
 		{
 			name:            "unseal help",
 			prog:            "ojster",
 			args:            []string{"unseal", "-h"},
 			wantCode:        0,
-			wantOutContains: "Usage: ojster unseal",
+			wantOutContains: "ojster unseal",
 		},
 		{
 			name:            "docker-init behaves like run (help)",
 			prog:            "docker-init",
 			args:            []string{"-h"},
 			wantCode:        0,
-			wantOutContains: "Usage: ojster run",
+			wantOutContains: "ojster run",
 		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var out, errb bytes.Buffer
-			code := entrypoint(c.prog, c.args, "v1.2.3", hdr, &out, &errb)
+			code := entrypoint(c.prog, c.args, "v1.2.3", &out, &errb)
 			if code != c.wantCode {
 				t.Fatalf("entrypoint(%s %v) returned code %d; want %d; stderr=%q", c.prog, c.args, code, c.wantCode, errb.String())
 			}
@@ -246,7 +243,6 @@ func TestEntrypoint_SubcommandDispatch(t *testing.T) {
 // ----------------------------- parse-error coverage for subcommands -----------------------------
 
 func TestEntrypoint_SubcommandFlagParseErrors(t *testing.T) {
-	hdr := "HDR"
 
 	cases := []struct {
 		name       string
@@ -266,7 +262,7 @@ func TestEntrypoint_SubcommandFlagParseErrors(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			var out, errb bytes.Buffer
 			// entrypoint expects args without the program name; pass as-is so subcommand is first arg.
-			code := entrypoint("ojster", c.args, "v", hdr, &out, &errb)
+			code := entrypoint("ojster", c.args, "v", &out, &errb)
 			if code != c.wantCode {
 				t.Fatalf("entrypoint(%v) returned %d; want %d; stderr=%q", c.args, code, c.wantCode, errb.String())
 			}
@@ -282,7 +278,6 @@ func TestEntrypoint_SubcommandFlagParseErrors(t *testing.T) {
 // TestEntrypoint_Keypair_Delegation ensures entrypoint delegates to handleKeypair which calls pqc.KeypairWithPaths.
 // This test uses explicit --priv-file and --pub-file flags to avoid writing to default locations.
 func TestEntrypoint_Keypair_Delegation(t *testing.T) {
-	hdr := "HDR"
 
 	priv := tmpFilePath(t, "priv.b64")
 	pub := tmpFilePath(t, "pub.b64")
@@ -290,7 +285,7 @@ func TestEntrypoint_Keypair_Delegation(t *testing.T) {
 	var out, errb bytes.Buffer
 	// pass flags to set output paths
 	args := []string{"keypair", "--priv-file", priv, "--pub-file", pub}
-	code := entrypoint("ojster", args, "v", hdr, &out, &errb)
+	code := entrypoint("ojster", args, "v", &out, &errb)
 	if code != 0 {
 		t.Fatalf("entrypoint(keypair) returned %d; want 0; stderr=%q", code, errb.String())
 	}
@@ -318,9 +313,8 @@ func TestEntrypoint_Keypair_Delegation(t *testing.T) {
 // TestEntrypoint_Seal_MissingPositional ensures entrypoint dispatches to handleSeal and that
 // handleSeal returns the expected error when the required positional KEY is missing.
 func TestEntrypoint_Seal_MissingPositional(t *testing.T) {
-	hdr := "HDR"
 	var out, errb bytes.Buffer
-	code := entrypoint("ojster", []string{"seal"}, "v", hdr, &out, &errb)
+	code := entrypoint("ojster", []string{"seal"}, "v", &out, &errb)
 	if code != 1 {
 		t.Fatalf("entrypoint(seal missing arg) returned %d; want 1; stdout=%q stderr=%q", code, out.String(), errb.String())
 	}
@@ -331,14 +325,14 @@ func TestEntrypoint_Seal_MissingPositional(t *testing.T) {
 
 // TestEntrypoint_Unseal_Delegation ensures entrypoint delegates to handleUnseal (help path).
 func TestEntrypoint_Unseal_Delegation(t *testing.T) {
-	hdr := "HDR"
 	var out, errb bytes.Buffer
-	code := entrypoint("ojster", []string{"unseal", "-h"}, "v", hdr, &out, &errb)
+	code := entrypoint("ojster", []string{"unseal", "-h"}, "v", &out, &errb)
 	if code != 0 {
 		t.Fatalf("entrypoint(unseal -h) returned %d; want 0; stdout=%q stderr=%q", code, out.String(), errb.String())
 	}
-	if !strings.Contains(out.String(), "Usage: ojster unseal") {
-		t.Fatalf("expected unseal usage; got stdout=%q stderr=%q", out.String(), errb.String())
+	// The handler prints the synopsis line (e.g., "ojster unseal ..."), so assert on that.
+	if !strings.Contains(out.String(), unsealSynopsis) {
+		t.Fatalf("expected unseal synopsis; got stdout=%q stderr=%q", out.String(), errb.String())
 	}
 }
 

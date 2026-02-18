@@ -42,33 +42,34 @@ Environment variables:
   OJSTER_REGEX
       Regex used by the client (run mode) to select which env values to send.
 
-Notes:
-  Ojster provides one-way, quantum-safe sealing (MLKEM + AES). Anyone can encrypt;
-  only the server holding the private key can decrypt.
-
 Usage:
   ojster help
   ojster version
-
-  ojster keypair [--priv-file PATH] [--pub-file PATH]
-      Generate a new keypair. Writes private and public key files.
-
-  ojster seal [--pub-file PATH] [--out PATH] KEY
-      Encrypt KEY in an env file using the public key (no private key required).
-
-  ojster unseal [--in PATH] [--priv-file PATH] [--json] [KEY...]
-      Decrypt values from an env file using a private key and print results.
-
-  ojster run [--] command [args...]
-      Client mode: send selected encrypted env values to the server, receive
-      decrypted values, merge them into the environment and exec the command.
-
-  ojster serve [--] command [args...]
-      Server mode: listen on the Unix socket and return client requests with
-      decrypted env values.
 `
 
+const keypairSynopsis = "ojster keypair"
+const keypairDesc = "Generate a new keypair. Writes private and public key files."
+const keypairArgs = "[--priv-file PATH] [--pub-file PATH]"
+
+const sealSynopsis = "ojster seal"
+const sealDesc = "Encrypt KEY in an env file using the public key."
+const sealArgs = "[--pub-file PATH] [--out PATH] KEY"
+
+const unsealSynopsis = "ojster unseal"
+const unsealDesc = "Decrypt values from an env file using a private key and print results."
+const unsealArgs = "[--in PATH] [--priv-file PATH] [--json] [KEY...]"
+
+const runSynopsis = "ojster run"
+const runDesc = "Client mode: send selected encrypted env values to the server and exec the command."
+const runArgs = "[--] command [args...]"
+
+const serveSynopsis = "ojster serve"
+const serveDesc = "Server mode: listen on the Unix socket and return decrypted env values to clients."
+const serveArgs = "[--] command [args...]"
+
 var version = "0.0.0"
+
+// ----------------------------- utilities --------------------------------
 
 // RunEnv contains the environment-derived values used by the client/run path.
 type RunEnv struct {
@@ -112,12 +113,56 @@ func readServeEnv() ServeEnv {
 	return ServeEnv{PrivateKeyFile: priv, SocketPath: getSocketPath()}
 }
 
+// usage prints the composed help text to the provided writer.
+func usage(outw io.Writer) {
+	fmt.Fprint(outw, header)
+	printCommands(outw)
+}
+
+func printCommands(outw io.Writer) {
+	pairs := [][2]string{
+		{keypairSynopsis, keypairDesc},
+		{sealSynopsis, sealDesc},
+		{unsealSynopsis, unsealDesc},
+		{runSynopsis, runDesc},
+		{serveSynopsis, serveDesc},
+	}
+
+	// compute max synopsis length for alignment
+	max := 0
+	for _, p := range pairs {
+		if l := len(p[0]); l > max {
+			max = l
+		}
+	}
+
+	for _, p := range pairs {
+		fmt.Fprintf(outw, "  %-*s  %s\n", max, p[0], p[1])
+	}
+}
+
+// parseFlags parses args using fs and handles help/errors consistently.
+// Returns a non‑zero exit code if parsing should stop, otherwise 0.
+
+func parseFlags(fs *flag.FlagSet, args []string, errw io.Writer, cmdName string) int {
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		fmt.Fprintf(errw, "failed to parse %s flags: %v\n", cmdName, err)
+		return 2
+	}
+	return -1 // means "no error, continue"
+}
+
+// ----------------------------- main --------------------------------
+
 func main() {
 	prog := filepath.Base(os.Args[0])
 	args := os.Args[1:]
 
 	// Entrypoint writes directly to the provided writers and returns an exit code.
-	code := entrypoint(prog, args, version, header, os.Stdout, os.Stderr)
+	code := entrypoint(prog, args, version, os.Stdout, os.Stderr)
 
 	// Ensure we exit with the code returned by Entrypoint.
 	os.Exit(code)
@@ -130,9 +175,9 @@ func main() {
 // - outw and errw are the writers to use for stdout and stderr respectively.
 // Entrypoint writes to the provided writers and returns an exit code.
 // It does not call os.Exit.
-func entrypoint(prog string, args []string, version string, header string, outw io.Writer, errw io.Writer) int {
+func entrypoint(prog string, args []string, version string, outw io.Writer, errw io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprint(outw, header)
+		usage(outw)
 		return 0
 	}
 
@@ -148,7 +193,7 @@ func entrypoint(prog string, args []string, version string, header string, outw 
 
 	switch sub {
 	case "help":
-		fmt.Fprint(outw, header)
+		usage(outw)
 		return 0
 	case "version":
 		fmt.Fprintln(outw, version)
@@ -164,25 +209,10 @@ func entrypoint(prog string, args []string, version string, header string, outw 
 	case "unseal":
 		return handleUnseal(rawSubArgs, outw, errw)
 	default:
-		fmt.Fprint(outw, header)
+		usage(outw)
 		fmt.Fprintf(errw, "unknown subcommand: %s\n", sub)
 		return 1
 	}
-}
-
-// ----------------------------- utilities --------------------------------
-
-// parseFlags parses args using fs and handles help/errors consistently.
-// Returns a non‑zero exit code if parsing should stop, otherwise 0.
-func parseFlags(fs *flag.FlagSet, args []string, errw io.Writer, cmdName string) int {
-	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
-			return 0
-		}
-		fmt.Fprintf(errw, "failed to parse %s flags: %v\n", cmdName, err)
-		return 2
-	}
-	return -1 // means "no error, continue"
 }
 
 // ------------------------- subcommand handlers ---------------------------
@@ -191,11 +221,11 @@ func parseFlags(fs *flag.FlagSet, args []string, errw io.Writer, cmdName string)
 func handleKeypair(args []string, outw io.Writer, errw io.Writer) int {
 	const cmdName = "keypair"
 	fs := flag.NewFlagSet(cmdName, flag.ContinueOnError)
-	fs.SetOutput(errw)
+	fs.SetOutput(outw)
 	privPath := fs.String("priv-file", pqc.DefaultPrivFile(), "private key filename to write")
 	pubPath := fs.String("pub-file", pqc.DefaultPubFile(), "public key filename to write")
 	fs.Usage = func() {
-		fmt.Fprintf(outw, "Usage: ojster %s [options]\n\nOptions:\n", cmdName)
+		fmt.Fprintf(outw, "%s %s\n\n%s\n\nOptions:\n", keypairSynopsis, keypairArgs, keypairDesc)
 		fs.PrintDefaults()
 	}
 
@@ -211,11 +241,11 @@ func handleKeypair(args []string, outw io.Writer, errw io.Writer) int {
 func handleSeal(args []string, outw io.Writer, errw io.Writer) int {
 	const cmdName = "seal"
 	fs := flag.NewFlagSet(cmdName, flag.ContinueOnError)
-	fs.SetOutput(errw)
+	fs.SetOutput(outw)
 	pubPath := fs.String("pub-file", pqc.DefaultPubFile(), "public key filename to read")
 	outPath := fs.String("out", ".env", "env file path to write")
 	fs.Usage = func() {
-		fmt.Fprintf(outw, "Usage: ojster %s [options] KEY\n\nOptions:\n", cmdName)
+		fmt.Fprintf(outw, "%s %s\n\n%s\n\nOptions:\n", sealSynopsis, sealArgs, sealDesc)
 		fs.PrintDefaults()
 	}
 
@@ -244,12 +274,12 @@ func handleSeal(args []string, outw io.Writer, errw io.Writer) int {
 func handleUnseal(args []string, outw io.Writer, errw io.Writer) int {
 	const cmdName = "unseal"
 	fs := flag.NewFlagSet(cmdName, flag.ContinueOnError)
-	fs.SetOutput(errw)
+	fs.SetOutput(outw)
 	inPath := fs.String("in", ".env", "env file path to read")
 	privPath := fs.String("priv-file", pqc.DefaultPrivFile(), "private key filename to read")
 	jsonOut := fs.Bool("json", false, "output decrypted keys/values as JSON object")
 	fs.Usage = func() {
-		fmt.Fprintf(outw, "Usage: ojster %s [options] [KEY...]\n\nOptions:\n", cmdName)
+		fmt.Fprintf(outw, "%s %s\n\n%s\n\nOptions:\n", unsealSynopsis, unsealArgs, unsealDesc)
 		fs.PrintDefaults()
 	}
 
@@ -266,10 +296,10 @@ func handleUnseal(args []string, outw io.Writer, errw io.Writer) int {
 func handleRun(args []string, outw io.Writer, errw io.Writer) int {
 	const cmdName = "run"
 	fs := flag.NewFlagSet(cmdName, flag.ContinueOnError)
-	fs.SetOutput(errw)
+	fs.SetOutput(outw)
 	// No run-specific flags currently; command follows optional "--".
 	fs.Usage = func() {
-		fmt.Fprintf(outw, "Usage: ojster %s [--] command [args...]\n\n", cmdName)
+		fmt.Fprintf(outw, "%s %s\n\n%s\n", runSynopsis, runArgs, runDesc)
 		fs.PrintDefaults()
 	}
 
@@ -292,10 +322,10 @@ func handleRun(args []string, outw io.Writer, errw io.Writer) int {
 func handleServe(args []string, outw io.Writer, errw io.Writer) int {
 	const cmdName = "serve"
 	fs := flag.NewFlagSet(cmdName, flag.ContinueOnError)
-	fs.SetOutput(errw)
+	fs.SetOutput(outw)
 	// No serve-specific flags currently; command follows optional "--".
 	fs.Usage = func() {
-		fmt.Fprintf(outw, "Usage: ojster %s [--] command [args...]\n\n", cmdName)
+		fmt.Fprintf(outw, "%s %s\n\n%s\n", serveSynopsis, serveArgs, serveDesc)
 		fs.PrintDefaults()
 	}
 
