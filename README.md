@@ -1,4 +1,4 @@
-# Ojster – GitOps-safe one-way encrypted secrets
+# [Ojster – GitOps-safe one-way encrypted secrets](https://github.com/ojster/ojster)
 
 **Problem:** I can manage my entire Docker Compose stack with Git, _except secrets_.
 
