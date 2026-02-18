@@ -8,16 +8,17 @@
 
 Docker Compose workflows commonly rely on environment variables. Even when encrypted with tools like [Ansible Vault](https://docs.ansible.com/projects/ansible/latest/cli/ansible-vault.html), [Dotenvx](https://github.com/dotenvx/dotenvx), or [env-vault](https://github.com/romantomjak/env-vault), decrypted values often end up embedded in container specs, visible in management UIs (Docker Desktop, Portainer), or leaked via `docker inspect`, logs, or image metadata.
 
-**Ojster** closes this gap. It is a companion to Dotenvx that enables **zero-trust, ephemeral secrets for Docker Compose**, ideal for self-hosting prebuilt images in a GitOps workflow. Decryption happens _just in time_ during container startup and remains exclusively in memory under strict least-privilege constraints.
+**Ojster** closes this gap. It provides **one-way, quantum-safe encryption** (MLKEM + AES) and a hardened decryption server so you can commit encrypted values to Git and decrypt them _just in time_ at container startup — in memory and under strict least-privilege constraints. This **zero-trust, ephemeral secrets** solution is ideal for self-hosting prebuilt images in a GitOps workflow with Docker Compose.
 
-## Benefits
+## Highlights
 
-- **Securely store secrets next to Compose files** — encrypted values are safe to commit to Git.
+- **Securely store secrets next to Compose files** — encrypted values are safe to commit.
 - **No plaintext secrets in container specs** — decrypted values exist only in RAM.
 - **Minimal integration effort** — no need to override entrypoints or commands.
-- **Encrypt new secrets without private key access** — anyone can encrypt; only the server can decrypt.
+- **Anyone can encrypt; only the server can decrypt** — public-key, one-way encryption.
 - **Air-gapped, least-privileged server** — no internet, no DNS, immutable rootfs, tmpfs, non-root user, zero capabilities.
-- **Auditable and lightweight** — ~500 lines of Go (compiled by you), no third-party runtime dependencies on the client.
+- **Auditable and lightweight** — small Go codebase (compiled by you), no third-party runtime dependencies on the client.
+- **Pluggable architecture** — Ojster ships its own `seal`, `unseal`, and `keypair` implementations (MLKEM + AES) and can also use Dotenvx as an alternative backend if desired.
 
 Get ready to BYOB and safely store encrypted secrets in Git.
 
@@ -56,6 +57,12 @@ docker logs -f ojster_example_client
 docker compose down
 ```
 
+Ideally the Ojster server compose.yaml file becomes part of the stack you manage via GitOps, as well a the PUBLIC key, so you can easily add new encrypted environment variables.
+
+**Notes**
+
+- The examples above use the Ojster-provided `keypair` and `seal` commands. If you prefer, [Ojster can also interoperate with Dotenvx](./examples/02_dotenvx/) — it is pluggable and works with Dotenvx out of the box.
+
 ## Integrating existing stacks
 
 Add the 4-line snippet (marked **OJSTER INTEGRATION** in [compose.yaml](./compose.yaml)) to any service you want to integrate. Ojster acts as a lightweight `docker-init` replacement and injects decrypted values at process start — no need to modify entrypoints, commands, or rebuild images.
@@ -64,24 +71,25 @@ Add the 4-line snippet (marked **OJSTER INTEGRATION** in [compose.yaml](./compos
 
 ### Bitnami Sealed Secrets
 
-If you’re familiar with Kubernetes, **Ojster is the closest conceptual match to Bitnami Sealed Secrets — but for Docker Compose**.
+If you know Kubernetes, **Ojster is conceptually similar to Bitnami Sealed Secrets — but for Docker Compose**.
 
 Shared principles:
 
 - **Encrypted secrets stored safely in Git**
-- **One-way encryption** — anyone can encrypt; only the system holding the private key can decrypt
+- **One-way encryption** — anyone can encrypt; only the private-key holder can decrypt
 - **Plaintext never appears in configuration files**
 
 Sealed Secrets uses a Kubernetes controller. Ojster applies the same pattern to Docker Compose using a lightweight client and a hardened decryption server.
 
 ### Dotenvx and Docker secrets
 
-Ojster encryption is currently “powered by” [Dotenvx](https://dotenvx.com), but the projects are not officially affiliated. See [Dotenvx docs](https://dotenvx.com/docs/) for usage instructions. The table below compares Ojster to plain Dotenvx and Docker secrets.
+Ojster implements its own MLKEM + AES sealing/unsealing and keypair generation, but it remains **pluggable** and compatible with Dotenvx. The table below compares Ojster to plain Dotenvx (the free, Open Source version) and Docker secrets.
 
 | Feature                                                 | Ojster | `dotenvx run`<br>outside container | `dotenvx run`<br>inside container | Docker secrets |
 | ------------------------------------------------------- | -----: | ---------------------------------: | --------------------------------: | -------------: |
 | **Secure secrets in Git**                               |     ✅ |                                 ✅ |                                ✅ |             ❌ |
 | **Encrypted env vars<br>in container spec**             |     ✅ |                                 ❌ |                                ⚠️ |             ❌ |
+| **Quantum-safe encryption**                             |     ✅ |                                 ❌ |                                ❌ |             ❌ |
 | **Unmodified<br>container image**                       |     ✅ |                                 ✅ |                                ❌ |             ✅ |
 | **Native Docker Compose**                               |     ✅ |                                 ❌ |                                ✅ |             ✅ |
 | **Air-gapped<br>private key access**                    |     ✅ |                                 ❌ |                                ❌ |            N/A |
@@ -90,7 +98,7 @@ Ojster encryption is currently “powered by” [Dotenvx](https://dotenvx.com), 
 
 **Interpretation**
 
-- **Ojster** integrates encrypted secrets into GitOps Compose workflows with minimal attack surface.
+- **Ojster** integrates encrypted secrets into GitOps Compose workflows with minimal attack surface using post-quantum cryptography (PQC).
 - **`dotenvx run` outside container** calling `docker compose up` still places decrypted values into container specs (visible to orchestration tooling), requires wrapping around Compose commands, and is not air-gapped (e.g. to prevent a malicious dependency from data exfiltration).
 - **`dotenvx run` inside container** requires shipping decryption tooling in **each image** (823 third-party dependencies) and exposes keys to **all containers**, increasing attack surface and image size. The [official walkthrough](https://dotenvx.com/docs/platforms/docker-compose) sets the private key as plaintext env var in the container spec.
 - **Docker secrets** are not encrypted and unsafe to store in Git.
@@ -114,16 +122,15 @@ Ojster does not provide the feature set of a full secrets platform. If that's wh
 
 ### High-level flow
 
-1. **Client selection:** scan environment for values matching `OJSTER_REGEX` (configurable).
-2. **HTTP over Unix socket:** client posts `key → encrypted value` map to the Ojster server over the Unix domain socket.
-3. **Server workdir:** create a tmpfs directory, write `.env`, symlink `.env.keys`.
-4. **Subprocess:** run `dotenvx get -o` (configurable) to decrypt in memory.
-5. **Validation:** ensure subprocess returns only requested keys.
-6. **Return:** send decrypted map back to client.
-7. **Exec:** client merges values and `exec`s the real entrypoint.
+1. **Selection:** client scans environment for values matching `OJSTER_REGEX` (configurable).
+2. **IPC:** client posts `key → encrypted value` map to the Ojster server over a Unix domain socket.
+3. **Decryption:** server decrypts using private key or outsources decryption to a user defined subprocess.
+4. **Return:** server sends decrypted map back to client.
+5. **Exec:** client merges values into the environment and `exec`s the real entrypoint.
 
 ### Key implementation details
 
+- **Configurable subprocess** runs in tmp directory containing encrypted `.env` and `.env.keys` symlinked to private key
 - **Tmpfs enforcement** using Linux `statfs`
 - **Strict validation** of subprocess output
 - **Minimal logging** to avoid leaking secrets
@@ -146,7 +153,7 @@ Securely provision the private key on the Ojster server host. Only the Ojster se
 **Contributing**
 
 - Open issues for bugs or feature requests.
-- Ensure `./tools/test` passes.
+- Ensure `./tools/test` passes locally.
 - Keep changes small and security-aware.
 - No third-party runtime dependencies will be accepted.
 
