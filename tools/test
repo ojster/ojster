@@ -127,25 +127,20 @@ docker bake image
 echo -e "${YELLOW}${BOLD}→ Creating .env…${RESET}"
 echo "EXAMPLE1=1234" > .env
 
-docker run --rm \
-    -v "$REPO_ROOT":/app \
-    --workdir=/app \
-    --pull=never \
-    -u=64646:64646 \
-    --cap-drop=ALL \
-    --network=none \
-    --security-opt=no-new-privileges=true \
-    ojster/ojster keypair
+OJSTER_HARDENED=(
+  --rm
+  -v "$(pwd)":/app
+  --workdir=/app
+  --pull=never
+  -u=64646:64646
+  --cap-drop=ALL
+  --network=none
+  --security-opt=no-new-privileges=true
+  ojster/ojster
+)
 
-echo -n '1234' | docker run -i --rm \
-    -v "$REPO_ROOT":/app \
-    --workdir=/app \
-    --pull=never \
-    -u=64646:64646 \
-    --cap-drop=ALL \
-    --network=none \
-    --security-opt=no-new-privileges=true \
-    ojster/ojster seal EXAMPLE
+docker run "${OJSTER_HARDENED[@]}" keypair
+echo -n '1234' | docker run -i "${OJSTER_HARDENED[@]}" seal EXAMPLE
 
 # ----------------------------------------
 # VERIFY .env ENCRYPTED
