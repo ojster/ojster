@@ -67,6 +67,48 @@ Usage:
 
 var version = "0.0.0"
 
+// RunEnv contains the environment-derived values used by the client/run path.
+type RunEnv struct {
+	// Regex used to select which env values to send to the server.
+	Regex string
+	// SocketPath is the Unix domain socket path the client will POST to.
+	SocketPath string
+}
+
+// ServeEnv contains the environment-derived values used by the server/serve path.
+type ServeEnv struct {
+	// PrivateKeyFile is the path containing the private key file for decryption.
+	PrivateKeyFile string
+	// SocketPath is the Unix domain socket path the server will listen on.
+	SocketPath string
+}
+
+func getSocketPath() string {
+	p := os.Getenv("OJSTER_SOCKET_PATH")
+	if p == "" {
+		return "/mnt/ojster/ipc.sock"
+	}
+	return p
+}
+
+// readRunEnv reads only the env vars needed for run mode.
+func readRunEnv() RunEnv {
+	re := os.Getenv("OJSTER_REGEX")
+	if re == "" {
+		re = pqc.DefaultValueRegex()
+	}
+	return RunEnv{Regex: re, SocketPath: getSocketPath()}
+}
+
+// readServeEnv reads only the env vars needed for serve mode.
+func readServeEnv() ServeEnv {
+	priv := os.Getenv("OJSTER_PRIVATE_KEY_FILE")
+	if priv == "" {
+		priv = "/run/secrets/private_key"
+	}
+	return ServeEnv{PrivateKeyFile: priv, SocketPath: getSocketPath()}
+}
+
 func main() {
 	prog := filepath.Base(os.Args[0])
 	args := os.Args[1:]
@@ -236,7 +278,8 @@ func handleRun(args []string, outw io.Writer, errw io.Writer) int {
 		cmdArgs = cmdArgs[1:]
 	}
 
-	return client.Run(cmdArgs, outw, errw)
+	runEnv := readRunEnv()
+	return client.Run(runEnv.Regex, runEnv.SocketPath, cmdArgs, outw, errw)
 }
 
 // handleServe starts the server. For testability, server.Serve should return an exit code
@@ -260,5 +303,6 @@ func handleServe(args []string, outw io.Writer, errw io.Writer) int {
 		cmdArgs = cmdArgs[1:]
 	}
 
-	return server.Serve(context.Background(), cmdArgs, outw, errw)
+	serveEnv := readServeEnv()
+	return server.Serve(serveEnv.PrivateKeyFile, serveEnv.SocketPath, context.Background(), cmdArgs, outw, errw)
 }

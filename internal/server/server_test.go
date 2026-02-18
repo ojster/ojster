@@ -20,6 +20,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -100,12 +101,14 @@ func TestCheckTempIsTmpfs(t *testing.T) {
 }
 
 func TestServe_TmpfsFailure_StatfsError(t *testing.T) {
+	// Make os.TempDir() point to a non-existent path for this test by setting TMPDIR.
 	t.Setenv("TMPDIR", "/definitely-not-existing")
 
 	var outBuf bytes.Buffer
 	var errBuf bytes.Buffer
 
-	code := Serve(context.Background(), nil, &outBuf, &errBuf)
+	// Pass empty socketPath and privateKeyFile; Serve will call checkTempIsTmpfs(os.TempDir()) and fail.
+	code := Serve("", "", context.Background(), nil, &outBuf, &errBuf)
 	if code == 0 {
 		t.Fatalf("expected non-zero exit code for tmpfs failure")
 	}
@@ -125,20 +128,26 @@ func TestServe_Startup(t *testing.T) {
 	defer cancel()
 
 	socketPath := filepath.Join(t.TempDir(), "ojster.sock")
-	t.Setenv("OJSTER_SOCKET_PATH", socketPath)
 
+	// create a temporary file to act as the private key file path
 	tmp := t.TempDir()
-	t.Setenv("OJSTER_PRIVATE_KEY_FILE", filepath.Join(tmp, ".env"))
+	privateKeyFile := filepath.Join(tmp, ".env")
+	// create the file so the server can symlink to it (handlePost may expect it)
+	if err := os.WriteFile(privateKeyFile, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("failed to create private key file: %v", err)
+	}
 
 	errCh := make(chan int, 1)
 	var outBuf bytes.Buffer
 	var errBuf bytes.Buffer
 
+	// Start Serve in a goroutine; pass explicit privateKeyFile and socketPath.
 	go func() {
-		code := Serve(ctx, nil, &outBuf, &errBuf)
+		code := Serve(privateKeyFile, socketPath, ctx, nil, &outBuf, &errBuf)
 		errCh <- code
 	}()
 
+	// Wait for the server to be ready to accept connections.
 	waitForServer(t, socketPath)
 
 	client := getUnixHTTPClient(socketPath)
@@ -167,12 +176,13 @@ func TestServe_Startup(t *testing.T) {
 
 func TestServe_InvalidSocketPath(t *testing.T) {
 	// point to a directory that cannot be created/listened on
-	t.Setenv("OJSTER_SOCKET_PATH", "/definitely-not-existing-dir/ojster.sock")
+	invalidSocket := "/definitely-not-existing-dir/ojster.sock"
 
+	// privateKeyFile can be empty for this test
 	var outBuf bytes.Buffer
 	var errBuf bytes.Buffer
 
-	code := Serve(context.Background(), nil, &outBuf, &errBuf)
+	code := Serve("", invalidSocket, context.Background(), nil, &outBuf, &errBuf)
 	if code == 0 || !strings.Contains(errBuf.String(), "failed to listen") {
 		t.Fatalf("expected listen failure, got code=%d stderr=%q", code, errBuf.String())
 	}

@@ -61,11 +61,3 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 	// Apply permissions
 	return os.Chmod(path, perm)
 }
-
-func GetSocketPath() string {
-	p := os.Getenv("OJSTER_SOCKET_PATH")
-	if p == "" {
-		return "/mnt/ojster/ipc.sock"
-	}
-	return p
-}

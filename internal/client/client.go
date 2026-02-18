@@ -29,9 +29,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ojster/ojster/internal/pqc"
 	"github.com/ojster/ojster/internal/util/env"
-	"github.com/ojster/ojster/internal/util/file"
 )
 
 // Assign functions to vars so tests can override them
@@ -58,7 +56,7 @@ func retryWithBackoff(errw io.Writer, backoff *time.Duration, maxBackoff time.Du
 // - nextArgs are the command and args to exec
 // - outw and errw are writers for stdout/stderr
 // Returns an exit code suitable for os.Exit.
-func Run(nextArgs []string, outw io.Writer, errw io.Writer) int {
+func Run(regex string, socketPath string, nextArgs []string, outw io.Writer, errw io.Writer) int {
 	if len(nextArgs) < 1 {
 		fmt.Fprintln(errw, "run requires a next-binary to execute. Usage: ojster run <next-binary> [args...]")
 		return 2
@@ -66,10 +64,8 @@ func Run(nextArgs []string, outw io.Writer, errw io.Writer) int {
 
 	fmt.Fprintln(outw, "ojster run")
 
-	socketPath := file.GetSocketPath()
-
 	allEnv := environFunc()
-	requestMap, err := filterEnvByValue(allEnv)
+	requestMap, err := filterEnvByValue(allEnv, regex)
 	if err != nil {
 		fmt.Fprintln(errw, "failed to filter environment:", err)
 		return 2
@@ -156,13 +152,15 @@ func Run(nextArgs []string, outw io.Writer, errw io.Writer) int {
 	return 0
 }
 
-// filterEnvByValue returns a map of env key->value for entries whose value matches OJSTER_REGEX.
-// Returns an error if the regex from OJSTER_REGEX is invalid.
-func filterEnvByValue(envMap []string) (map[string]string, error) {
-	valRe, err := getValueRegex()
+// filterEnvByValue returns a map of env key->value for entries whose value matches regex.
+// Returns an error if the regex is invalid.
+func filterEnvByValue(envMap []string, regex string) (map[string]string, error) {
+
+	valRe, err := regexp.Compile(regex)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid regex %q: %w", regex, err)
 	}
+
 	outw := make(map[string]string)
 	for _, kv := range envMap {
 		parts := strings.SplitN(kv, "=", 2)
@@ -243,16 +241,4 @@ func buildExecEnv(newMap map[string]string) []string {
 	}
 
 	return out
-}
-
-func getValueRegex() (*regexp.Regexp, error) {
-	pattern := os.Getenv("OJSTER_REGEX")
-	if pattern == "" {
-		pattern = pqc.DefaultValueRegex()
-	}
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return nil, fmt.Errorf("invalid OJSTER_REGEX %q: %w", pattern, err)
-	}
-	return re, nil
 }

@@ -102,32 +102,6 @@ func TestWriteFileAtomic_OverwriteExistingFile(t *testing.T) {
 	}
 }
 
-func TestGetSocketPath_DefaultAndEnv(t *testing.T) {
-	// Ensure env is unset
-	orig := os.Getenv("OJSTER_SOCKET_PATH")
-	_ = os.Unsetenv("OJSTER_SOCKET_PATH")
-	defer func() {
-		_ = os.Setenv("OJSTER_SOCKET_PATH", orig)
-	}()
-
-	def := GetSocketPath()
-	if def == "" {
-		t.Fatalf("expected default socket path, got empty")
-	}
-	// default should be the documented default; assert it
-	if def != "/mnt/ojster/ipc.sock" {
-		// On non-Linux test environments this default is still expected; fail only if different.
-		t.Fatalf("unexpected default socket path: %q", def)
-	}
-
-	// Set custom value
-	_ = os.Setenv("OJSTER_SOCKET_PATH", "/tmp/custom.sock")
-	got := GetSocketPath()
-	if got != "/tmp/custom.sock" {
-		t.Fatalf("env override failed: want=%q got=%q", "/tmp/custom.sock", got)
-	}
-}
-
 func TestPermissionBehavior(t *testing.T) {
 	td := t.TempDir()
 	path := filepath.Join(td, "perm.txt")

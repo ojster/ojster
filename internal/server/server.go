@@ -24,8 +24,6 @@ import (
 	"os"
 	"syscall"
 	"time"
-
-	"github.com/ojster/ojster/internal/util/file"
 )
 
 const linuxTmpfsMagic = 0x01021994
@@ -52,19 +50,12 @@ func loggingMiddleware(next http.Handler) http.Handler {
 // Serve starts the HTTP server and blocks until the server stops or ctx is cancelled.
 // It writes informational and error messages to the provided writers and returns an
 // integer exit code suitable for passing to os.Exit by the caller.
-func Serve(ctx context.Context, cmdArgs []string, outw io.Writer, errw io.Writer) int {
+func Serve(privateKeyFile string, socketPath string, ctx context.Context, cmdArgs []string, outw io.Writer, errw io.Writer) int {
 
 	// Ensure /tmp is tmpfs (security expectation for ephemeral files)
 	if err := checkTempIsTmpfs(os.TempDir()); err != nil {
 		fmt.Fprintln(errw, err)
 		return 1
-	}
-
-	socketPath := file.GetSocketPath()
-
-	privateKeyFile := os.Getenv("OJSTER_PRIVATE_KEY_FILE")
-	if privateKeyFile == "" {
-		privateKeyFile = "/run/secrets/private_key"
 	}
 
 	mux := http.NewServeMux()

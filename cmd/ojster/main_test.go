@@ -420,3 +420,40 @@ func TestHandleRun_DelegatesToClient_NonexistentCommand(t *testing.T) {
 		t.Fatalf("expected some stderr output from handleRun for nonexistent command; got stdout=%q", out.String())
 	}
 }
+
+// ----------------------------- env reading -----------------------------
+
+func TestReadServeEnv_Defaults(t *testing.T) {
+	// Ensure no env vars are set so readServeEnv returns defaults.
+	t.Setenv("OJSTER_PRIVATE_KEY_FILE", "")
+	t.Setenv("OJSTER_SOCKET_PATH", "")
+
+	got := readServeEnv()
+
+	wantSocket := "/mnt/ojster/ipc.sock"
+	if got.SocketPath != wantSocket {
+		t.Fatalf("unexpected SocketPath: want=%q got=%q", wantSocket, got.SocketPath)
+	}
+
+	wantPriv := "/run/secrets/private_key"
+	if got.PrivateKeyFile != wantPriv {
+		t.Fatalf("unexpected PrivateKeyFile: want=%q got=%q", wantPriv, got.PrivateKeyFile)
+	}
+}
+
+func TestReadServeEnv_CustomValues(t *testing.T) {
+	tmpSocket := filepath.Join(t.TempDir(), "ojster.sock")
+	tmpPriv := filepath.Join(t.TempDir(), "mypriv.key")
+
+	t.Setenv("OJSTER_SOCKET_PATH", tmpSocket)
+	t.Setenv("OJSTER_PRIVATE_KEY_FILE", tmpPriv)
+
+	got := readServeEnv()
+
+	if got.SocketPath != tmpSocket {
+		t.Fatalf("unexpected SocketPath: want=%q got=%q", tmpSocket, got.SocketPath)
+	}
+	if got.PrivateKeyFile != tmpPriv {
+		t.Fatalf("unexpected PrivateKeyFile: want=%q got=%q", tmpPriv, got.PrivateKeyFile)
+	}
+}

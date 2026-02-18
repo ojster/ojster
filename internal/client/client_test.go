@@ -101,14 +101,14 @@ func startUnixHTTPServer(t *testing.T, handler http.Handler) (socketPath string,
 
 //
 // ─────────────────────────────────────────────────────────────
-//   getValueRegex / filterEnvByValue
+//   filterEnvByValue / regex validation
 // ─────────────────────────────────────────────────────────────
 //
 
-func TestGetValueRegex_InvalidRegex(t *testing.T) {
-	t.Setenv("OJSTER_REGEX", "(")
-
-	_, err := getValueRegex()
+// Test that an invalid regex passed into filterEnvByValue returns an error.
+func TestFilterEnvByValue_InvalidRegex(t *testing.T) {
+	env := []string{"A=1"}
+	_, err := filterEnvByValue(env, "(")
 	if err == nil {
 		t.Fatalf("expected error for invalid regex")
 	}
@@ -116,8 +116,6 @@ func TestGetValueRegex_InvalidRegex(t *testing.T) {
 
 func TestFilterEnvByValue(t *testing.T) {
 	t.Run("default_regex", func(t *testing.T) {
-		t.Setenv("OJSTER_REGEX", "")
-
 		// Construct canonical sealed values for tests
 		mlkem := []byte{0x01, 0x02, 0x03}
 		gcm := []byte{0x04, 0x05}
@@ -130,7 +128,10 @@ func TestFilterEnvByValue(t *testing.T) {
 			"INVALID-NAME=" + sealed,
 		}
 
-		out, err := filterEnvByValue(env)
+		// Use the canonical default regex from pqc
+		regex := pqc.DefaultValueRegex()
+
+		out, err := filterEnvByValue(env, regex)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -150,10 +151,8 @@ func TestFilterEnvByValue(t *testing.T) {
 	})
 
 	t.Run("custom_regex", func(t *testing.T) {
-		t.Setenv("OJSTER_REGEX", "^foo")
-
 		env := []string{"A=foo123", "B=bar"}
-		out, err := filterEnvByValue(env)
+		out, err := filterEnvByValue(env, "^foo")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -233,13 +232,15 @@ func TestRun_BasicFlow(t *testing.T) {
 		return []byte(`{"SECRET":"decrypted"}`), 200, nil
 	}
 
+	// Ensure the environment contains the sealed value
 	t.Setenv("SECRET", sealed)
 	t.Setenv("PLAIN", "hello")
 
 	var outBuf bytes.Buffer
 	var errBuf bytes.Buffer
 
-	code := Run([]string{"echo", "hello"}, &outBuf, &errBuf)
+	// Pass regex and socketPath explicitly. socketPath is unused by the stubbed post.
+	code := Run(pqc.DefaultValueRegex(), "unused-socket", []string{"echo", "hello"}, &outBuf, &errBuf)
 	if code != 0 {
 		t.Fatalf("Run returned non-zero exit code: %d stderr=%q", code, errBuf.String())
 	}
@@ -327,7 +328,8 @@ func TestRun_RetryScenarios(t *testing.T) {
 			var outBuf bytes.Buffer
 			var errBuf bytes.Buffer
 
-			code := Run([]string{"echo"}, &outBuf, &errBuf)
+			// socketPath unused by stubbed post
+			code := Run(pqc.DefaultValueRegex(), "unused-socket", []string{"echo"}, &outBuf, &errBuf)
 			if code != 0 {
 				t.Fatalf("Run returned non-zero exit code: %d stderr=%q", code, errBuf.String())
 			}
@@ -346,7 +348,7 @@ func TestRun_Error_NoNextBinary(t *testing.T) {
 	var outBuf bytes.Buffer
 	var errBuf bytes.Buffer
 
-	code := Run([]string{}, &outBuf, &errBuf)
+	code := Run(pqc.DefaultValueRegex(), "unused-socket", []string{}, &outBuf, &errBuf)
 	if code != 2 {
 		t.Fatalf("expected exit code %d for missing next-binary, got %d stderr=%q", 2, code, errBuf.String())
 	}
@@ -360,7 +362,7 @@ func TestRun_Error_NoMatchingEnv(t *testing.T) {
 	var outBuf bytes.Buffer
 	var errBuf bytes.Buffer
 
-	code := Run([]string{"echo"}, &outBuf, &errBuf)
+	code := Run(pqc.DefaultValueRegex(), "unused-socket", []string{"echo"}, &outBuf, &errBuf)
 	if code != 2 {
 		t.Fatalf("expected exit code %d for no matching env, got %d stderr=%q", 2, code, errBuf.String())
 	}
@@ -379,7 +381,7 @@ func TestRun_Error_ExecNotFound(t *testing.T) {
 	var outBuf bytes.Buffer
 	var errBuf bytes.Buffer
 
-	code := Run([]string{"does-not-exist"}, &outBuf, &errBuf)
+	code := Run(pqc.DefaultValueRegex(), "unused-socket", []string{"does-not-exist"}, &outBuf, &errBuf)
 	if code != 2 {
 		t.Fatalf("expected exec-not-found exit code %d, got %d stderr=%q", 2, code, errBuf.String())
 	}
