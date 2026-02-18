@@ -261,12 +261,13 @@ func handleUnseal(args []string, outw io.Writer, errw io.Writer) int {
 }
 
 // handleRun passes through positional args to client.Run while using FlagSet
-// semantics for any run-specific flags and for help handling.
+// semantics for the command separator. The command to exec is provided after
+// an optional "--" separator: "ojster run [--] command [args...]".
 func handleRun(args []string, outw io.Writer, errw io.Writer) int {
 	const cmdName = "run"
 	fs := flag.NewFlagSet(cmdName, flag.ContinueOnError)
 	fs.SetOutput(errw)
-	// Add run-specific flags here if needed in future.
+	// No run-specific flags currently; command follows optional "--".
 	fs.Usage = func() {
 		fmt.Fprintf(outw, "Usage: ojster %s [--] command [args...]\n\n", cmdName)
 		fs.PrintDefaults()
@@ -285,15 +286,16 @@ func handleRun(args []string, outw io.Writer, errw io.Writer) int {
 	return client.Run(runEnv.Regex, runEnv.SocketPath, cmdArgs, outw, errw)
 }
 
-// handleServe starts the server. For testability, server.Serve should return an exit code
-// and write any startup errors to errw; if it blocks, that's expected for serve mode.
+// handleServe starts the server. The server accepts a command to run after an
+// optional "--" separator: "ojster serve [--] command [args...]". There are no
+// serve-specific flags at the moment.
 func handleServe(args []string, outw io.Writer, errw io.Writer) int {
 	const cmdName = "serve"
 	fs := flag.NewFlagSet(cmdName, flag.ContinueOnError)
 	fs.SetOutput(errw)
-	// Add serve-specific flags here if needed.
+	// No serve-specific flags currently; command follows optional "--".
 	fs.Usage = func() {
-		fmt.Fprintf(outw, "Usage: ojster %s [options]\n\n", cmdName)
+		fmt.Fprintf(outw, "Usage: ojster %s [--] command [args...]\n\n", cmdName)
 		fs.PrintDefaults()
 	}
 
