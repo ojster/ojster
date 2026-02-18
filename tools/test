@@ -32,12 +32,12 @@ LOG_DIR="log"
 # ----------------------------------------
 cleanup() {
     echo -e "${YELLOW}${BOLD}→ Cleanup: clear .env and ojster keys…${RESET}"
-    echo '' > .env
+    [ -f .env ] && rm .env
     [ -f ojster_pub.key ] && rm ojster_pub.key
     [ -f ojster_priv.key ] && rm ojster_priv.key
 
     echo -e "${YELLOW}${BOLD}→ Cleanup: stopping docker compose…${RESET}"
-    docker compose down >/dev/null 2>&1 || true
+    docker compose down -v --remove-orphans >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -153,7 +153,7 @@ fi
 # COMPOSE UP AND VERIFY CLIENT LOGS
 # ----------------------------------------
 echo -e "${YELLOW}${BOLD}→ Starting docker compose…${RESET}"
-docker compose -p ojster up -d
+docker compose up -d
 CLIENT_DIR=examples/01_client
 output="$(docker compose --project-directory=. -f ./"$CLIENT_DIR"/compose.base.yaml -f ./"$CLIENT_DIR"/compose.ojster.yaml up --force-recreate 2>&1)"
 
