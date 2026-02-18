@@ -28,6 +28,9 @@ import (
 	"github.com/ojster/ojster/internal/util/tty"
 )
 
+// TODO: update this header with the new subcommands, update the env vars,
+// mention quantum safe and expand the usage message of the subcommand help output
+
 const header = `Ojster - GitOps-safe one-way encrypted secrets for Docker Compose
 
 Environment variables:
