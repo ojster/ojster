@@ -186,7 +186,7 @@ func handleSeal(args []string, outw io.Writer, errw io.Writer) int {
 	}
 	keyName := pos[0]
 
-	plaintext, err := tty.ReadSecretFromStdin("Reading plaintext input from stdin (input will be hidden). Press Ctrl-D when done.\n")
+	plaintext, err := tty.ReadSecretFromStdin("Reading plaintext input from stdin (input will be hidden). Press Ctrl-D twice when done.\n")
 	if err != nil {
 		fmt.Fprintln(errw, err.Error())
 		return 1
