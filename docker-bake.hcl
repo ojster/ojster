@@ -1,5 +1,5 @@
 group "default" {
-  targets = ["binary"]
+  targets = ["image"]
 }
 
 target "binary" {

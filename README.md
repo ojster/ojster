@@ -34,27 +34,45 @@ On the server that hosts your Docker containers:
 git clone https://github.com/ojster/ojster
 cd ojster
 
-# Add some env vars
-echo EXAMPLE1=1234 > .env
-echo EXAMPLE2=HelloWorld >> .env
-
-# Encrypt env vars with the dotenvx CLI in a locked-down container
-docker run -it --rm -v $(pwd):/app --workdir=/app --pull=always \
-  -u=64646:64646 --cap-drop=ALL --network=none \
-  --security-opt=no-new-privileges=true dotenv/dotenvx encrypt
-
-# Verify encrypted and safe to store in Git
-cat .env
-
-# Build Your Own Binary
+# Build Your Own Binary (image)
 docker bake
 
-# Bring up example stack
+# Add recommended hardening docker run flags
+HARDEN=(
+  -u=64646:64646
+  --pull=never
+  --read-only
+  --cap-drop=ALL
+  --network=none
+  --security-opt=no-new-privileges=true
+)
+
+# Generate a keypair using Ojster's built-in keypair command
+docker run "${HARDEN[@]}" --rm -v "$(pwd)":/o ojster/ojster keypair
+
+# Do NOT commit the ojster_priv.key to Git!
+
+# Bring up ojster server
 docker compose up -d
-# See that the app has access to decrypted env vars
-docker logs -f ojster_example_client
+
+CLIENT_DIR=examples/01_client
+
+# Encrypt a variable using Ojster's built-in seal command (no private key needed)
+# Enter an example secret and press Ctrl-D (twice) when done.
+docker run "${HARDEN[@]}" -it --rm -v "$(pwd)":/o ojster/ojster seal EXAMPLE
+
+# Bring up example stack WITHOUT ojster enabled
+docker compose --project-directory=. -f ./"$CLIENT_DIR"/compose.base.yaml up
+
+# Note in output that env var is still encrypted (prefix OJSTER-1:)
+
+# Bring up example stack WITH ojster enabled
+docker compose --project-directory=. -f ./"$CLIENT_DIR"/compose.base.yaml -f ./"$CLIENT_DIR"/compose.ojster.yaml up
+
+# Note in output that env var is now decrypted
+
 # Cleanup
-docker compose down
+docker compose down -v --remove-orphans
 ```
 
 Ideally the Ojster server compose.yaml file becomes part of the stack you manage via GitOps, as well a the PUBLIC key, so you can easily add new encrypted environment variables.
@@ -63,9 +81,13 @@ Ideally the Ojster server compose.yaml file becomes part of the stack you manage
 
 - The examples above use the Ojster-provided `keypair` and `seal` commands. If you prefer, [Ojster can also interoperate with Dotenvx](./examples/02_dotenvx/) — it is pluggable and works with Dotenvx out of the box.
 
-## Integrating existing stacks
+## Integrate your stack
 
-Add the 4-line snippet (marked **OJSTER INTEGRATION** in [compose.yaml](./compose.yaml)) to any service you want to integrate. Ojster acts as a lightweight `docker-init` replacement and injects decrypted values at process start — no need to modify entrypoints, commands, or rebuild images.
+Add the snippet in [compose.ojster.yaml](./examples/01_client/compose.ojster.yaml) to any service you want to integrate. Ojster acts as a lightweight `docker-init` replacement and injects decrypted values at process start — no need to modify entrypoints, commands, or rebuild images.
+
+### Podman compatibility
+
+Ojster currently does not support podman. The dockerfile relies on a [BuildKit feature](https://github.com/moby/moby/issues/36677#issuecomment-957357940) which [podman/buildah doesn't offer](https://github.com/containers/buildah/issues/2323). Additionally [podman doesn't support the bake .hcl files](https://github.com/containers/buildah/issues/4796), [volume.type=image](https://github.com/containers/podman/issues/26505) and has a different `--init` implementation: `/run/podman-init`. But most importantly podman will throw this error when trying to provide our own init binary in combination with `--init`: "Error response from daemon: container create: conflict with mount added by --init to "/run/podman-init": duplicate mount destination".
 
 ## Comparison
 

@@ -65,3 +65,4 @@ RUN --network=none go build \
 FROM scratch AS binary-scratch
 COPY --from=binary /app/ojster /ojster
 ENTRYPOINT [ "/ojster" ]
+WORKDIR /o

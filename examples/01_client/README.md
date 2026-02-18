@@ -1,0 +1,3 @@
+## Ojster client integration example
+
+Follow the [quick start guide](../../README.md#quick-start) to deploy the example client. The integration snippet in [compose.ojster.yaml](./compose.ojster.yaml) uses the experimental `volume.type=image`. If you can't or don't want to use this, make sure you have the ojster binary available and bind mount that instead at `/sbin/docker-init`. Ensure you use the same version as the Ojster server. You can extract the binary from the running ojster_server container: `docker cp ojster_server:/ojster .`.

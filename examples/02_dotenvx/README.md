@@ -1,4 +1,4 @@
-## Ojster with Dotenvx Example
+## Ojster Dotenvx integration example
 
 Run these commands from the repo root directory to swap the default Ojster encryption backend with Dotenvx. See [compose.dotenvx.yaml](./compose.dotenvx.yaml) for the updated Compose values.
 

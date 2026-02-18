@@ -119,7 +119,6 @@ fi
 # ----------------------------------------
 echo -e "${YELLOW}${BOLD}→ Running docker bake…${RESET}"
 docker bake
-docker bake image
 
 # ----------------------------------------
 # CREATE .env
@@ -129,8 +128,7 @@ echo "EXAMPLE1=1234" > .env
 
 OJSTER_HARDENED=(
   --rm
-  -v "$(pwd)":/app
-  --workdir=/app
+  -v "$(pwd)":/o
   --pull=never
   -u=64646:64646
   --cap-drop=ALL
@@ -155,7 +153,9 @@ fi
 # COMPOSE UP AND VERIFY CLIENT LOGS
 # ----------------------------------------
 echo -e "${YELLOW}${BOLD}→ Starting docker compose…${RESET}"
-output="$(docker compose up --force-recreate --attach client 2>&1)"
+docker compose -p ojster up -d
+CLIENT_DIR=examples/01_client
+output="$(docker compose --project-directory=. -f ./"$CLIENT_DIR"/compose.base.yaml -f ./"$CLIENT_DIR"/compose.ojster.yaml up --force-recreate 2>&1)"
 
 echo -e "${YELLOW}${BOLD}→ Checking client logs for decrypted EXAMPLE1=1234…${RESET}"
 
