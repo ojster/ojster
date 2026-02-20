@@ -87,29 +87,30 @@ type ServeEnv struct {
 	SocketPath string
 }
 
-func getSocketPath() string {
-	p := os.Getenv("OJSTER_SOCKET_PATH")
-	if p == "" {
-		return "/mnt/ojster/ipc.sock"
+// getenvDefaultAndUnset returns the value of env key if set, otherwise def.
+// If the env var was set (non-empty), it unsets it before returning.
+func getenvDefaultAndUnset(key, def string) string {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
 	}
-	return p
+	_ = os.Unsetenv(key)
+	return v
 }
 
-// readRunEnv reads only the env vars needed for run mode.
+func getSocketPath() string {
+	return getenvDefaultAndUnset("OJSTER_SOCKET_PATH", "/mnt/ojster/ipc.sock")
+}
+
+// readRunEnv reads only the env vars needed for run mode and clears them.
 func readRunEnv() RunEnv {
-	re := os.Getenv("OJSTER_REGEX")
-	if re == "" {
-		re = pqc.DefaultValueRegex()
-	}
+	re := getenvDefaultAndUnset("OJSTER_REGEX", pqc.DefaultValueRegex())
 	return RunEnv{Regex: re, SocketPath: getSocketPath()}
 }
 
-// readServeEnv reads only the env vars needed for serve mode.
+// readServeEnv reads only the env vars needed for serve mode and clears them.
 func readServeEnv() ServeEnv {
-	priv := os.Getenv("OJSTER_PRIVATE_KEY_FILE")
-	if priv == "" {
-		priv = "/run/secrets/private_key"
-	}
+	priv := getenvDefaultAndUnset("OJSTER_PRIVATE_KEY_FILE", "/run/secrets/private_key")
 	return ServeEnv{PrivateKeyFile: priv, SocketPath: getSocketPath()}
 }
 

@@ -451,3 +451,26 @@ func TestReadServeEnv_CustomValues(t *testing.T) {
 		t.Fatalf("unexpected PrivateKeyFile: want=%q got=%q", tmpPriv, got.PrivateKeyFile)
 	}
 }
+
+// TestGetenvDefaultAndUnset verifies getenvDefaultAndUnset returns the env value and unsets it,
+// and returns the default when the env var is not set.
+func TestGetenvDefaultAndUnset(t *testing.T) {
+	// Case 1: env var set -> value returned and var unset
+	const key1 = "OJSTER_TEST_KEY"
+	_ = os.Setenv(key1, "value1")
+	got := getenvDefaultAndUnset(key1, "def1")
+	if got != "value1" {
+		t.Fatalf("getenvDefaultAndUnset(%q) = %q; want %q", key1, got, "value1")
+	}
+	if v := os.Getenv(key1); v != "" {
+		t.Fatalf("expected %q to be unset after getenvDefaultAndUnset, but got %q", key1, v)
+	}
+
+	// Case 2: env var not set -> default returned
+	const key2 = "OJSTER_TEST_KEY2"
+	_ = os.Unsetenv(key2)
+	got2 := getenvDefaultAndUnset(key2, "def2")
+	if got2 != "def2" {
+		t.Fatalf("getenvDefaultAndUnset(%q) = %q; want default %q", key2, got2, "def2")
+	}
+}
