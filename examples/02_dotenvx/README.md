@@ -3,9 +3,8 @@
 Run these commands from the repo root directory to swap the default Ojster encryption backend with Dotenvx. See [compose.dotenvx.yaml](./compose.dotenvx.yaml) for the updated Compose values.
 
 ```sh
-# Add some env vars
-echo EXAMPLE1=1234 > .env
-echo EXAMPLE2=HelloWorld >> .env
+# Add some env var
+echo EXAMPLE=1234 > .env
 
 # Encrypt env vars with the dotenvx CLI in a locked-down container
 docker run -it --rm -v $(pwd):/app --workdir=/app --pull=always \
@@ -15,13 +14,18 @@ docker run -it --rm -v $(pwd):/app --workdir=/app --pull=always \
 # Verify encrypted and safe to store in Git
 cat .env
 
-# Build Your Own Binary
+# Build Your Own Binary (image)
 docker bake
 
-# Bring up example stack
-docker compose -f compose.yaml -f examples/dotenvx/compose.dotenvx.yaml up -d
-# See that the app has access to decrypted env vars
-docker logs -f ojster_example_client
+# Bring up Ojster server
+docker compose -f compose.yaml -f examples/02_dotenvx/compose.dotenvx.yaml up -d
+
+# Bring up example stack Ojster enabled and regex overridden for dotenvx compatibility
+OJSTER_REGEX="^'?(encrypted:[A-Za-z0-9+/=]+)'?$" docker compose -f ./examples/01_client/compose.base.yaml -f ./examples/01_client/compose.ojster.yaml -p ojster-client-example --project-directory=. up
+
+# Note that the app has access to decrypted env vars
+
 # Cleanup
-docker compose down
+docker compose -p ojster-client-example down
+docker compose down -v
 ```

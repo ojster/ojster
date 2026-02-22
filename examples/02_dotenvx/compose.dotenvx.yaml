@@ -7,7 +7,12 @@ services:
   ojster:
     image: dotenv/dotenvx             # Dotenvx image as base
     volumes:
-      - ./bin/ojster:/ojster:ro       # Mount the ojster binary
+      - type: image
+        source: ojster/ojster
+        target: /ojster               # Mount the ojster binary
+        read_only: true
+        image:
+          subpath: ojster
     entrypoint:
       - /ojster                       # Run ojster instead of dotenvx
       - serve
@@ -15,7 +20,3 @@ services:
       - dotenvx
       - get
       - -o
-
-  client:
-    environment:                      # Set the regex to the pattern used by dotenvx
-      - OJSTER_REGEX=^'?(encrypted:[A-Za-z0-9+/=]+)'?$

@@ -7,6 +7,8 @@ volumes:
 
 services:
   client:
+    environment:
+      - OJSTER_REGEX
     init: true                        # Prepend docker-init binary before entrypoint
     volumes:
       - ojster:/mnt/ojster:ro         # Mount shared volume for socket communication
