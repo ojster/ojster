@@ -24,9 +24,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-BIN_DIR="bin"
-LOG_DIR="log"
-
 # ----------------------------------------
 # CLEANUP TRAP
 # ----------------------------------------
@@ -44,28 +41,11 @@ trap cleanup EXIT
 # ----------------------------------------
 # CLEAN WORKSPACE
 # ----------------------------------------
-echo -e "${YELLOW}${BOLD}→ Cleaning bin/ and log/ (preserving README.md)…${RESET}"
+echo -e "${YELLOW}${BOLD}→ Cleaning log/…${RESET}"
 
-clean_and_preserve_readme() {
-    local dir="$1"
-    local old="${dir}.old"
-
-    if [ -d "$dir" ]; then
-        mv "$dir" "$old"
-    fi
-
-    mkdir -p "$dir"
-
-    if [ -d "$old" ]; then
-        if [ -f "$old/README.md" ]; then
-            mv "$old/README.md" "$dir/README.md"
-        fi
-        rm -rf "$old"
-    fi
-}
-
-clean_and_preserve_readme "$BIN_DIR"
-clean_and_preserve_readme "$LOG_DIR"
+LOG_DIR="log"
+rm -r "$LOG_DIR"
+mkdir "$LOG_DIR"
 
 # ----------------------------------------
 # DOCKER BAKE TEST
