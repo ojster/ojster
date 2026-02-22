@@ -1,3 +1,8 @@
+# Run as uid/gid 64646 by default, override via env var
+# Server needs to run with permission to the private key
+x-oj-user: &oj_user "${PUID:-64646}:${PGID:-64646}"
+x-oj-o: &oj_o "noexec,uid=${PUID:-64646},gid=${PGID:-64646},mode=755"
+
 volumes:
   ojster:
     name: "ojster"
@@ -5,7 +10,7 @@ volumes:
     driver_opts:
       type: tmpfs
       device: tmpfs
-      o: noexec,uid=64646,gid=64646,mode=755
+      o: *oj_o
 
 secrets:
   private_key:
@@ -17,8 +22,9 @@ services:
   ojster:
     container_name: ojster_server
     image: ojster/ojster
+    restart: unless-stopped
     init: true                        # Run tini as PID 1
-    user: 64646:64646                 # Run as non-root
+    user: *oj_user                    # Run as non-root
     cap_drop:
       - ALL                           # Least privilege
     security_opt:

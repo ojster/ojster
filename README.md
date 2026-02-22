@@ -37,9 +37,15 @@ cd ojster
 # Build Your Own Binary (image)
 docker bake
 
-# Add recommended hardening docker run flags
-HARDEN=(
-  -u=64646:64646
+# Run containers as the current uid/gid to grant access to the files in this repo
+# Not required for Docker Desktop on macOS
+# For a production setup it's recommended to use a dedicated server uid/gid
+PUID="$(id -u)"; PGID="$(id -g)"
+export PUID PGID
+
+# Common docker run flags
+COMMON=(
+  --user="${PUID:-64646}:${PGID:-64646}"
   --pull=never
   --read-only
   --cap-drop=ALL
@@ -48,31 +54,38 @@ HARDEN=(
 )
 
 # Generate a keypair using Ojster's built-in keypair command
-docker run "${HARDEN[@]}" --rm -v "$(pwd)":/o ojster/ojster keypair
+docker run "${COMMON[@]}" --rm -v "$(pwd)":/o ojster/ojster keypair
 
 # Do NOT commit the ojster_priv.key to Git!
 
 # Bring up ojster server
 docker compose up -d
 
-CLIENT_DIR=examples/01_client
-
 # Encrypt a variable using Ojster's built-in seal command (no private key needed)
 # Enter an example secret and press Ctrl-D (twice) when done.
-docker run "${HARDEN[@]}" -it --rm -v "$(pwd)":/o ojster/ojster seal EXAMPLE
+docker run "${COMMON[@]}" -it --rm -v "$(pwd)":/o ojster/ojster seal EXAMPLE
 
-# Bring up example stack WITHOUT ojster enabled
-docker compose --project-directory=. -f ./"$CLIENT_DIR"/compose.base.yaml up
+CLIENT_DIR=examples/01_client
+
+COMMON=(
+  --project-name=ojster-client-example
+  --file=./"$CLIENT_DIR"/compose.base.yaml
+  --project-directory=.
+)
+
+# Bring up example stack WITHOUT Ojster enabled
+docker compose "${COMMON[@]}" up
 
 # Note in output that env var is still encrypted (prefix OJSTER-1:)
 
-# Bring up example stack WITH ojster enabled
-docker compose --project-directory=. -f ./"$CLIENT_DIR"/compose.base.yaml -f ./"$CLIENT_DIR"/compose.ojster.yaml up
+# Bring up example stack WITH Ojster enabled
+docker compose "${COMMON[@]}" -f ./"$CLIENT_DIR"/compose.ojster.yaml up
 
 # Note in output that env var is now decrypted
 
 # Cleanup
-docker compose down -v --remove-orphans
+docker compose "${COMMON[@]}" down
+docker compose down -v
 ```
 
 Ideally the Ojster server compose.yaml file becomes part of the stack you manage via GitOps, as well a the PUBLIC key, so you can easily add new encrypted environment variables.
