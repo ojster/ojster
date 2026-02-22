@@ -58,7 +58,7 @@ docker run "${COMMON[@]}" --rm -v "$(pwd)":/o ojster/ojster keypair
 
 # Do NOT commit the ojster_priv.key to Git!
 
-# Bring up ojster server
+# Bring up Ojster server
 docker compose up -d
 
 # Encrypt a variable using Ojster's built-in seal command (no private key needed)
