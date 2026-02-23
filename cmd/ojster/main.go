@@ -313,6 +313,11 @@ func handleRun(args []string, outw io.Writer, errw io.Writer) int {
 		cmdArgs = cmdArgs[1:]
 	}
 
+	if len(cmdArgs) < 1 {
+		fmt.Fprintf(errw, "run requires a next command to execute. Usage: %s %s\n", runSynopsis, runArgs)
+		return 2
+	}
+
 	runEnv := readRunEnv()
 	return client.Run(runEnv.Regex, runEnv.SocketPath, cmdArgs, outw, errw)
 }

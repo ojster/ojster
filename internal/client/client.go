@@ -58,7 +58,7 @@ func retryWithBackoff(errw io.Writer, backoff *time.Duration, maxBackoff time.Du
 // Returns an exit code suitable for os.Exit.
 func Run(regex string, socketPath string, nextArgs []string, outw io.Writer, errw io.Writer) int {
 	if len(nextArgs) < 1 {
-		fmt.Fprintln(errw, "run requires a next-binary to execute. Usage: ojster run <next-binary> [args...]")
+		fmt.Fprintln(errw, "run requires a next command to execute.")
 		return 2
 	}
 
