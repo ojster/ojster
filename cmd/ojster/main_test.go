@@ -90,68 +90,6 @@ func TestEntrypoint_Unknown(t *testing.T) {
 	}
 }
 
-// ----------------------------- handler help behavior -----------------------------
-
-// TestHandleKeypair_Help ensures -h triggers usage printing and returns 0 without calling pqc.
-func TestHandleKeypair_Help(t *testing.T) {
-	var out, errb bytes.Buffer
-	code := handleKeypair([]string{"-h"}, &out, &errb)
-	if code != 0 {
-		t.Fatalf("handleKeypair -h returned %d; want 0", code)
-	}
-	if !strings.Contains(out.String(), "ojster keypair") {
-		t.Fatalf("expected keypair usage; got %q", out.String())
-	}
-}
-
-// TestHandleSeal_MissingArg ensures seal without positional KEY returns error 1 and message.
-func TestHandleSeal_MissingArg(t *testing.T) {
-	var out, errb bytes.Buffer
-	code := handleSeal([]string{}, &out, &errb)
-	if code != 1 {
-		t.Fatalf("handleSeal with no args returned %d; want 1", code)
-	}
-	if !strings.Contains(errb.String(), "seal requires exactly one positional argument: KEY") {
-		t.Fatalf("expected seal missing-arg message; got %q", errb.String())
-	}
-}
-
-// TestHandleUnseal_Help ensures -h prints usage and returns 0.
-func TestHandleUnseal_Help(t *testing.T) {
-	var out, errb bytes.Buffer
-	code := handleUnseal([]string{"-h"}, &out, &errb)
-	if code != 0 {
-		t.Fatalf("handleUnseal -h returned %d; want 0", code)
-	}
-	if !strings.Contains(out.String(), "ojster unseal") {
-		t.Fatalf("expected unseal usage; got %q", out.String())
-	}
-}
-
-// TestHandleRun_Help ensures run -h prints usage and returns 0.
-func TestHandleRun_Help(t *testing.T) {
-	var out, errb bytes.Buffer
-	code := handleRun([]string{"-h"}, &out, &errb)
-	if code != 0 {
-		t.Fatalf("handleRun -h returned %d; want 0", code)
-	}
-	if !strings.Contains(out.String(), "ojster run") {
-		t.Fatalf("expected run usage; got %q", out.String())
-	}
-}
-
-// TestHandleServe_Help ensures serve -h prints usage and returns 0.
-func TestHandleServe_Help(t *testing.T) {
-	var out, errb bytes.Buffer
-	code := handleServe([]string{"-h"}, &out, &errb)
-	if code != 0 {
-		t.Fatalf("handleServe -h returned %d; want 0", code)
-	}
-	if !strings.Contains(out.String(), "ojster serve") {
-		t.Fatalf("expected serve usage; got %q", out.String())
-	}
-}
-
 // ----------------------------- entrypoint dispatch tests -----------------------------
 
 // TestEntrypoint_SubcommandDispatch verifies entrypoint dispatches to the correct handlers.
@@ -177,56 +115,56 @@ func TestEntrypoint_SubcommandDispatch(t *testing.T) {
 			prog:            "ojster",
 			args:            []string{"version"},
 			wantCode:        0,
-			wantOutContains: "v1.2.3", // entrypoint prints the version string
+			wantOutContains: version, // entrypoint prints the version string
 		},
 		{
 			name:            "keypair help",
 			prog:            "ojster",
 			args:            []string{"keypair", "-h"},
 			wantCode:        0,
-			wantOutContains: "ojster keypair",
+			wantOutContains: keypairDesc,
 		},
 		{
 			name:            "run help",
 			prog:            "ojster",
 			args:            []string{"run", "-h"},
 			wantCode:        0,
-			wantOutContains: "ojster run",
+			wantOutContains: runSynopsis,
 		},
 		{
 			name:            "seal help",
 			prog:            "ojster",
 			args:            []string{"seal", "-h"},
 			wantCode:        0,
-			wantOutContains: "ojster seal",
+			wantOutContains: sealDesc,
 		},
 		{
 			name:            "serve help",
 			prog:            "ojster",
 			args:            []string{"serve", "-h"},
 			wantCode:        0,
-			wantOutContains: "ojster serve",
+			wantOutContains: serveDesc,
 		},
 		{
 			name:            "unseal help",
 			prog:            "ojster",
 			args:            []string{"unseal", "-h"},
 			wantCode:        0,
-			wantOutContains: "ojster unseal",
+			wantOutContains: unsealDesc,
 		},
 		{
 			name:            "docker-init behaves like run (help)",
 			prog:            "docker-init",
 			args:            []string{"-h"},
 			wantCode:        0,
-			wantOutContains: "ojster run",
+			wantOutContains: runDesc,
 		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var out, errb bytes.Buffer
-			code := entrypoint(c.prog, c.args, "v1.2.3", &out, &errb)
+			code := entrypoint(c.prog, c.args, version, &out, &errb)
 			if code != c.wantCode {
 				t.Fatalf("entrypoint(%s %v) returned code %d; want %d; stderr=%q", c.prog, c.args, code, c.wantCode, errb.String())
 			}
@@ -320,19 +258,6 @@ func TestEntrypoint_Seal_MissingPositional(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), "seal requires exactly one positional argument: KEY") {
 		t.Fatalf("expected seal missing-arg message; got stderr=%q stdout=%q", errb.String(), out.String())
-	}
-}
-
-// TestEntrypoint_Unseal_Delegation ensures entrypoint delegates to handleUnseal (help path).
-func TestEntrypoint_Unseal_Delegation(t *testing.T) {
-	var out, errb bytes.Buffer
-	code := entrypoint("ojster", []string{"unseal", "-h"}, "v", &out, &errb)
-	if code != 0 {
-		t.Fatalf("entrypoint(unseal -h) returned %d; want 0; stdout=%q stderr=%q", code, out.String(), errb.String())
-	}
-	// The handler prints the synopsis line (e.g., "ojster unseal ..."), so assert on that.
-	if !strings.Contains(out.String(), unsealSynopsis) {
-		t.Fatalf("expected unseal synopsis; got stdout=%q stderr=%q", out.String(), errb.String())
 	}
 }
 

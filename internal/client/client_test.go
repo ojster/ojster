@@ -36,7 +36,7 @@ import (
 // ─────────────────────────────────────────────────────────────
 //
 
-func EnvSliceToMap(env []string) map[string]string {
+func envSliceToMap(env []string) map[string]string {
 	out := make(map[string]string, len(env))
 	for _, kv := range env {
 		k, v, _ := strings.Cut(kv, "=")
@@ -194,7 +194,7 @@ func TestBuildExecEnv(t *testing.T) {
 	}
 
 	out := buildExecEnv(overrides)
-	got := EnvSliceToMap(out)
+	got := envSliceToMap(out)
 
 	want := map[string]string{
 		"A":     "1",
@@ -252,7 +252,7 @@ func TestRun_BasicFlow(t *testing.T) {
 		t.Fatalf("unexpected argv: %#v", *execArgv)
 	}
 
-	envMap := EnvSliceToMap(*execEnv)
+	envMap := envSliceToMap(*execEnv)
 	if envMap["SECRET"] != "decrypted" {
 		t.Fatalf("expected SECRET=decrypted, got %v", envMap["SECRET"])
 	}

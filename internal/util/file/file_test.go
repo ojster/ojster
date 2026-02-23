@@ -20,12 +20,6 @@ import (
 	"testing"
 )
 
-// helper: create a temp dir and return a path inside it
-func tmpPath(t *testing.T, name string) string {
-	t.Helper()
-	return filepath.Join(t.TempDir(), name)
-}
-
 // helper: read file content and mode
 func readFileAndMode(t *testing.T, path string) (string, os.FileMode) {
 	t.Helper()

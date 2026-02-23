@@ -23,7 +23,6 @@ import (
 )
 
 // exampleLines contains the canonical example content used by multiple tests.
-// Keep these lines exactly as in the original tests to preserve coverage.
 var exampleLines = []string{
 	"# comment line should be ignored",
 	"",
