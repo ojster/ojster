@@ -218,25 +218,14 @@ func postMapToServerJSON(socketPath string, m map[string]string) ([]byte, int, e
 
 func buildExecEnv(newMap map[string]string) []string {
 	current := environFunc()
-	out := make([]string, 0, len(current)+len(newMap))
-	allowed := make(map[string]struct{}, len(current))
+	out := make([]string, 0, len(current))
 
-	// Copy current env unless overridden or skipped
 	for _, kv := range current {
 		k, _, _ := strings.Cut(kv, "=")
-
-		if !strings.HasPrefix(k, "OJSTER_") {
-			allowed[k] = struct{}{}
-			if _, overridden := newMap[k]; !overridden {
-				out = append(out, kv)
-			}
-		}
-	}
-
-	// Add overrides
-	for k, v := range newMap {
-		if _, ok := allowed[k]; ok {
+		if v, ok := newMap[k]; ok {
 			out = append(out, k+"="+v)
+		} else {
+			out = append(out, kv)
 		}
 	}
 

@@ -197,10 +197,11 @@ func TestBuildExecEnv(t *testing.T) {
 	got := envSliceToMap(out)
 
 	want := map[string]string{
-		"A":     "1",
-		"B":     "22",
-		"EMPTY": "",
-		"D":     "",
+		"A":          "1",
+		"B":          "22",
+		"EMPTY":      "",
+		"D":          "",
+		"OJSTER_FOO": "2",
 	}
 
 	if !maps.Equal(got, want) {
