@@ -1,0 +1,22 @@
+secrets:
+  private_key:
+    file: ./.env.keys
+
+services:
+
+  ojster:
+    image: dotenv/dotenvx             # Dotenvx image as base
+    volumes:
+      - type: image
+        source: ojster/ojster
+        target: /ojster               # Mount the ojster binary
+        read_only: true
+        image:
+          subpath: ojster
+    entrypoint:
+      - /ojster                       # Run ojster instead of dotenvx
+      - serve
+    command:                          # Use dotenvx for decryption instead of ojster
+      - dotenvx
+      - get
+      - -o

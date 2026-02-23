@@ -3,13 +3,14 @@ set -euo pipefail
 
 OUTFILE="ojster-all.go.txt"
 
-# Start fresh
+# If set (non-empty), comments will be preserved.
+# Otherwise, comments are stripped.
+PRESERVE_COMMENTS="${OJSTER_INCLUDE_COMMENTS:-}"
+
 echo "// Combined Go source tree for ojster" > "$OUTFILE"
 echo "// Generated on $(date)" >> "$OUTFILE"
 echo "" >> "$OUTFILE"
 
-# Find all .go and _test.go files, sorted for deterministic output
-# Exclude vendor and build output directories
 find . \
   -type f \
   \( -name "*.go" -o -name "*_test.go" \) \
@@ -22,7 +23,22 @@ find . \
       echo "// FILE: $file" >> "$OUTFILE"
       echo "// =============================================" >> "$OUTFILE"
       echo "" >> "$OUTFILE"
-      cat "$file" >> "$OUTFILE"
+
+      if [[ -n "$PRESERVE_COMMENTS" ]]; then
+        # Keep file exactly as-is
+        cat "$file" >> "$OUTFILE"
+      else
+        # Strip comments while preserving code
+        # Removes:
+        #   - full-line comments:   ^\s*//
+        #   - block comments:       /* ... */
+        #   - but keeps code lines even if they contain inline comments
+        sed \
+          -e 's:/\*.*\*/::g' \
+          -e '/^\s*\/\//d' \
+          "$file" >> "$OUTFILE"
+      fi
+
       echo "" >> "$OUTFILE"
       echo "" >> "$OUTFILE"
     done

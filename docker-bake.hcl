@@ -1,5 +1,5 @@
 group "default" {
-  targets = ["binary"]
+  targets = ["image"]
 }
 
 target "binary" {
@@ -16,4 +16,12 @@ target "test" {
   dockerfile = "Dockerfile"
   pull = true
   output = ["./log"]
+}
+
+target "image" {
+  target = "binary-scratch"
+  context = "."
+  dockerfile = "Dockerfile"
+  pull = true
+  output = ["type=image,name=ojster/ojster:latest,load=true"]
 }

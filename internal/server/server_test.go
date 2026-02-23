@@ -1,4 +1,4 @@
-// Copyright 2026 Jip de Beer (Jip-Hop) and ojster contributers
+// Copyright 2026 Jip de Beer (Jip-Hop) and Ojster contributors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,12 +20,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/ojster/ojster/internal/testutil"
 )
 
 //
@@ -33,6 +32,13 @@ import (
 //   TEST HELPERS
 // ─────────────────────────────────────────────────────────────
 //
+
+func ExpectStatus(t *testing.T, rec *httptest.ResponseRecorder, want int) {
+	t.Helper()
+	if rec.Code != want {
+		t.Fatalf("expected %d, got %d (%s)", want, rec.Code, rec.Body.String())
+	}
+}
 
 func runPost(t *testing.T, body []byte, cmd []string, priv string) *httptest.ResponseRecorder {
 	t.Helper()
@@ -54,7 +60,7 @@ func waitForServer(t *testing.T, socketPath string) {
 	client := &http.Client{Transport: tr, Timeout: 100 * time.Millisecond}
 
 	for time.Now().Before(deadline) {
-		req, _ := http.NewRequest("GET", "http://unix/health", nil)
+		req, _ := http.NewRequest("GET", "http://unix/", nil)
 		resp, err := client.Do(req)
 		if err == nil {
 			resp.Body.Close()
@@ -95,18 +101,19 @@ func TestCheckTempIsTmpfs(t *testing.T) {
 }
 
 func TestServe_TmpfsFailure_StatfsError(t *testing.T) {
-
-	code := testutil.StubExit(t, &exitFunc)
-
+	// Make os.TempDir() point to a non-existent path for this test by setting TMPDIR.
 	t.Setenv("TMPDIR", "/definitely-not-existing")
 
-	out := testutil.CaptureStderr(t, func() {
-		defer testutil.ExpectExitPanic(t, code, 1)
-		Serve(context.Background(), nil)
-	})
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
 
-	if !strings.Contains(out, "failed to statfs") {
-		t.Fatalf("expected statfs failure, got: %s", out)
+	// Pass empty socketPath and privateKeyFile; Serve will call checkTempIsTmpfs(os.TempDir()) and fail.
+	code := Serve("", "", context.Background(), nil, &outBuf, &errBuf)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit code for tmpfs failure")
+	}
+	if !strings.Contains(errBuf.String(), "failed to statfs") {
+		t.Fatalf("expected statfs failure, got: %q", errBuf.String())
 	}
 }
 
@@ -121,17 +128,26 @@ func TestServe_Startup(t *testing.T) {
 	defer cancel()
 
 	socketPath := filepath.Join(t.TempDir(), "ojster.sock")
-	t.Setenv("OJSTER_SOCKET_PATH", socketPath)
 
+	// create a temporary file to act as the private key file path
 	tmp := t.TempDir()
-	t.Setenv("OJSTER_PRIVATE_KEY_FILE", filepath.Join(tmp, ".env"))
+	privateKeyFile := filepath.Join(tmp, ".env")
+	// create the file so the server can symlink to it (handlePost may expect it)
+	if err := os.WriteFile(privateKeyFile, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("failed to create private key file: %v", err)
+	}
 
-	done := make(chan struct{})
+	errCh := make(chan int, 1)
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
+
+	// Start Serve in a goroutine; pass explicit privateKeyFile and socketPath.
 	go func() {
-		Serve(ctx, nil)
-		close(done)
+		code := Serve(privateKeyFile, socketPath, ctx, nil, &outBuf, &errBuf)
+		errCh <- code
 	}()
 
+	// Wait for the server to be ready to accept connections.
 	waitForServer(t, socketPath)
 
 	client := getUnixHTTPClient(socketPath)
@@ -145,22 +161,31 @@ func TestServe_Startup(t *testing.T) {
 	}
 	resp.Body.Close()
 
+	// cancel and wait for Serve to return
 	cancel()
 
 	select {
-	case <-done:
+	case code := <-errCh:
+		if code != 0 {
+			t.Fatalf("Serve returned non-zero exit code after shutdown: %d stderr=%q", code, errBuf.String())
+		}
 	case <-time.After(1 * time.Second):
 		t.Fatalf("server did not shut down")
 	}
 }
 
 func TestServe_InvalidSocketPath(t *testing.T) {
-	code := testutil.StubExit(t, &exitFunc)
-
 	// point to a directory that cannot be created/listened on
-	t.Setenv("OJSTER_SOCKET_PATH", "/definitely-not-existing-dir/ojster.sock")
-	defer testutil.ExpectExitPanic(t, code, 1)
-	Serve(context.Background(), nil)
+	invalidSocket := "/definitely-not-existing-dir/ojster.sock"
+
+	// privateKeyFile can be empty for this test
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
+
+	code := Serve("", invalidSocket, context.Background(), nil, &outBuf, &errBuf)
+	if code == 0 || !strings.Contains(errBuf.String(), "failed to listen") {
+		t.Fatalf("expected listen failure, got code=%d stderr=%q", code, errBuf.String())
+	}
 }
 
 func getUnixHTTPClient(socketPath string) *http.Client {
@@ -170,4 +195,29 @@ func getUnixHTTPClient(socketPath string) *http.Client {
 		},
 	}
 	return &http.Client{Transport: tr, Timeout: 500 * time.Millisecond}
+}
+
+//
+// ─────────────────────────────────────────────────────────────
+//   loggingMiddleware
+// ─────────────────────────────────────────────────────────────
+//
+
+func TestLoggingMiddleware(t *testing.T) {
+	called := false
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusTeapot)
+	})
+	mw := loggingMiddleware(h)
+
+	req := httptest.NewRequest("GET", "/x", nil)
+	rec := httptest.NewRecorder()
+
+	mw.ServeHTTP(rec, req)
+
+	if !called {
+		t.Fatalf("handler not called")
+	}
+	ExpectStatus(t, rec, http.StatusTeapot)
 }

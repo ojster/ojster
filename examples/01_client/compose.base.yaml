@@ -1,0 +1,29 @@
+# This compose file contains an example app to integrate with Ojster
+# The important aspect to note is that it uses the environment variables
+# from the .env file encrypted by ojster seal
+
+services:
+
+  client:
+    container_name: ojster_example_client
+    image: bash                       # Example image
+    env_file:
+      - path: .env                    # Pass all vars from .env into container environment
+        required: true
+    environment:
+      - EXAMPLE2=${EXAMPLE}           # Variable assignment example
+    command:
+      - -c
+      - |
+        echo
+        env | grep EX
+        echo
+        echo 'This is an example.'
+        echo 'You should NOT actually log decrypted values!'
+
+    user: 64123:64123                 # Default recommended hardening
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges=true
+    read_only: true

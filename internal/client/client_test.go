@@ -1,4 +1,4 @@
-// Copyright 2026 Jip de Beer (Jip-Hop) and ojster contributers
+// Copyright 2026 Jip de Beer (Jip-Hop) and Ojster contributors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,6 +15,8 @@
 package client
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
@@ -25,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ojster/ojster/internal/testutil"
+	"github.com/ojster/ojster/internal/pqc"
 )
 
 //
@@ -33,6 +35,15 @@ import (
 //   TEST HELPERS
 // ─────────────────────────────────────────────────────────────
 //
+
+func envSliceToMap(env []string) map[string]string {
+	out := make(map[string]string, len(env))
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		out[k] = v
+	}
+	return out
+}
 
 func stubExec(t *testing.T) (*string, *[]string, *[]string) {
 	t.Helper()
@@ -90,33 +101,40 @@ func startUnixHTTPServer(t *testing.T, handler http.Handler) (socketPath string,
 
 //
 // ─────────────────────────────────────────────────────────────
-//   getValueRegex / filterEnvByValue
+//   filterEnvByValue / regex validation
 // ─────────────────────────────────────────────────────────────
 //
 
-func TestGetValueRegex_InvalidRegex(t *testing.T) {
-
-	code := testutil.StubExit(t, &exitFunc)
-
-	t.Setenv("OJSTER_REGEX", "(")
-
-	defer testutil.ExpectExitPanic(t, code, 2)
-
-	getValueRegex()
+// Test that an invalid regex passed into filterEnvByValue returns an error.
+func TestFilterEnvByValue_InvalidRegex(t *testing.T) {
+	env := []string{"A=1"}
+	_, err := filterEnvByValue(env, "(")
+	if err == nil {
+		t.Fatalf("expected error for invalid regex")
+	}
 }
 
 func TestFilterEnvByValue(t *testing.T) {
 	t.Run("default_regex", func(t *testing.T) {
-		t.Setenv("OJSTER_REGEX", "")
+		// Construct canonical sealed values for tests
+		mlkem := []byte{0x01, 0x02, 0x03}
+		gcm := []byte{0x04, 0x05}
+		sealed := pqc.BuildSealed(mlkem, gcm)
 
 		env := []string{
-			"GOOD=encrypted:ABC123",
-			"WRAPPED='encrypted:XYZ'",
+			"GOOD=" + sealed,
+			"WRAPPED='" + sealed + "'",
 			"BAD=plain",
-			"INVALID-NAME=encrypted:ABC",
+			"INVALID-NAME=" + sealed,
 		}
 
-		out := filterEnvByValue(env)
+		// Use the canonical default regex from pqc
+		regex := pqc.DefaultValueRegex()
+
+		out, err := filterEnvByValue(env, regex)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 
 		if _, ok := out["GOOD"]; !ok {
 			t.Fatalf("expected GOOD")
@@ -133,10 +151,11 @@ func TestFilterEnvByValue(t *testing.T) {
 	})
 
 	t.Run("custom_regex", func(t *testing.T) {
-		t.Setenv("OJSTER_REGEX", "^foo")
-
 		env := []string{"A=foo123", "B=bar"}
-		out := filterEnvByValue(env)
+		out, err := filterEnvByValue(env, "^foo")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 
 		if _, ok := out["A"]; !ok {
 			t.Fatalf("expected A")
@@ -175,13 +194,14 @@ func TestBuildExecEnv(t *testing.T) {
 	}
 
 	out := buildExecEnv(overrides)
-	got := testutil.EnvSliceToMap(out)
+	got := envSliceToMap(out)
 
 	want := map[string]string{
-		"A":     "1",
-		"B":     "22",
-		"EMPTY": "",
-		"D":     "",
+		"A":          "1",
+		"B":          "22",
+		"EMPTY":      "",
+		"D":          "",
+		"OJSTER_FOO": "2",
 	}
 
 	if !maps.Equal(got, want) {
@@ -201,17 +221,30 @@ func TestRun_BasicFlow(t *testing.T) {
 	oldPost := postMapToServerJSONFunc
 	t.Cleanup(func() { postMapToServerJSONFunc = oldPost })
 
+	// Build a canonical sealed value using pqc helper
+	mlkem := []byte{0x01, 0x02, 0x03}
+	gcm := []byte{0x04, 0x05}
+	sealed := pqc.BuildSealed(mlkem, gcm)
+
 	postMapToServerJSONFunc = func(socketPath string, m map[string]string) ([]byte, int, error) {
-		if len(m) != 1 || m["SECRET"] != "encrypted:ABC" {
+		if len(m) != 1 || m["SECRET"] != sealed {
 			t.Fatalf("unexpected request map: %#v", m)
 		}
 		return []byte(`{"SECRET":"decrypted"}`), 200, nil
 	}
 
-	t.Setenv("SECRET", "encrypted:ABC")
+	// Ensure the environment contains the sealed value
+	t.Setenv("SECRET", sealed)
 	t.Setenv("PLAIN", "hello")
 
-	Run([]string{"echo", "hello"})
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
+
+	// Pass regex and socketPath explicitly. socketPath is unused by the stubbed post.
+	code := Run(pqc.DefaultValueRegex(), "unused-socket", []string{"echo", "hello"}, &outBuf, &errBuf)
+	if code != 0 {
+		t.Fatalf("Run returned non-zero exit code: %d stderr=%q", code, errBuf.String())
+	}
 
 	if !strings.HasSuffix(*execPath, "echo") {
 		t.Fatalf("expected exec path to end with echo, got %s", *execPath)
@@ -220,7 +253,7 @@ func TestRun_BasicFlow(t *testing.T) {
 		t.Fatalf("unexpected argv: %#v", *execArgv)
 	}
 
-	envMap := testutil.EnvSliceToMap(*execEnv)
+	envMap := envSliceToMap(*execEnv)
 	if envMap["SECRET"] != "decrypted" {
 		t.Fatalf("expected SECRET=decrypted, got %v", envMap["SECRET"])
 	}
@@ -228,7 +261,7 @@ func TestRun_BasicFlow(t *testing.T) {
 
 //
 // ─────────────────────────────────────────────────────────────
-//   run() ERROR PATHS (exit stubbing)
+//   run() ERROR PATHS
 // ─────────────────────────────────────────────────────────────
 //
 
@@ -286,9 +319,21 @@ func TestRun_RetryScenarios(t *testing.T) {
 				return resp, code, nil
 			}
 
-			t.Setenv("SECRET", "encrypted:ABC")
+			// Use canonical sealed format so the stricter pqc.DefaultValueRegex matches.
+			mlkem := []byte{0x01, 0x02, 0x03}
+			gcm := []byte{0x04, 0x05}
+			sealed := pqc.BuildSealed(mlkem, gcm)
 
-			Run([]string{"echo"})
+			t.Setenv("SECRET", sealed)
+
+			var outBuf bytes.Buffer
+			var errBuf bytes.Buffer
+
+			// socketPath unused by stubbed post
+			code := Run(pqc.DefaultValueRegex(), "unused-socket", []string{"echo"}, &outBuf, &errBuf)
+			if code != 0 {
+				t.Fatalf("Run returned non-zero exit code: %d stderr=%q", code, errBuf.String())
+			}
 
 			if call != tc.wantCalls {
 				t.Fatalf("expected %d calls, got %d", tc.wantCalls, call)
@@ -298,35 +343,49 @@ func TestRun_RetryScenarios(t *testing.T) {
 }
 
 func TestRun_Error_NoNextBinary(t *testing.T) {
-	code := testutil.StubExit(t, &exitFunc)
-
 	stubPost(t)
 	t.Setenv("SECRET", "") // ensure no encrypted vars
-	defer testutil.ExpectExitPanic(t, code, 2)
-	Run([]string{})
+
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
+
+	code := Run(pqc.DefaultValueRegex(), "unused-socket", []string{}, &outBuf, &errBuf)
+	if code != 2 {
+		t.Fatalf("expected exit code %d for missing next-binary, got %d stderr=%q", 2, code, errBuf.String())
+	}
 }
 
 func TestRun_Error_NoMatchingEnv(t *testing.T) {
-	code := testutil.StubExit(t, &exitFunc)
-
 	stubPost(t)
 	t.Setenv("PLAIN", "hello")
 	t.Setenv("SECRET", "") // ensure no encrypted vars
-	defer testutil.ExpectExitPanic(t, code, 2)
-	Run([]string{"echo"})
+
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
+
+	code := Run(pqc.DefaultValueRegex(), "unused-socket", []string{"echo"}, &outBuf, &errBuf)
+	if code != 2 {
+		t.Fatalf("expected exit code %d for no matching env, got %d stderr=%q", 2, code, errBuf.String())
+	}
 }
 
 func TestRun_Error_ExecNotFound(t *testing.T) {
-	code := testutil.StubExit(t, &exitFunc)
-
 	// POST succeeds
+	oldPost := postMapToServerJSONFunc
+	t.Cleanup(func() { postMapToServerJSONFunc = oldPost })
 	postMapToServerJSONFunc = func(url string, m map[string]string) ([]byte, int, error) {
 		return []byte(`{"SECRET":"ok"}`), 200, nil
 	}
 
-	t.Setenv("SECRET", "encrypted:ABC")
-	defer testutil.ExpectExitPanic(t, code, 2)
-	Run([]string{"does-not-exist"})
+	t.Setenv("SECRET", "OJSTER-1:ABC")
+
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
+
+	code := Run(pqc.DefaultValueRegex(), "unused-socket", []string{"does-not-exist"}, &outBuf, &errBuf)
+	if code != 2 {
+		t.Fatalf("expected exec-not-found exit code %d, got %d stderr=%q", 2, code, errBuf.String())
+	}
 }
 
 //
@@ -338,7 +397,10 @@ func TestRun_Error_ExecNotFound(t *testing.T) {
 func TestPostMapToServerJSON(t *testing.T) {
 	socketPath, closeSrv := startUnixHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		m := testutil.DecodeJSON[map[string]string](t, body)
+		m := map[string]string{}
+		if err := json.Unmarshal(body, &m); err != nil {
+			t.Fatalf("invalid JSON: %v", err)
+		}
 		if m["A"] != "1" {
 			t.Fatalf("expected A=1")
 		}

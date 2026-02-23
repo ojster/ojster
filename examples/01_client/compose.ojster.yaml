@@ -1,0 +1,20 @@
+# This compose file contains only the required lines to add to each
+# service you want to integrate with Ojster
+
+volumes:
+  ojster:
+    external: true
+
+services:
+  client:
+    environment:
+      - OJSTER_REGEX
+    init: true                        # Prepend docker-init binary before entrypoint
+    volumes:
+      - ojster:/mnt/ojster:ro         # Mount shared volume for socket communication
+      - type: image
+        source: ojster/ojster
+        target: /sbin/docker-init     # Override the docker-init binary with with ojster
+        read_only: true
+        image:
+          subpath: ojster

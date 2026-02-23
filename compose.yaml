@@ -1,75 +1,40 @@
+# Run as uid/gid 64646 by default, override via env var
+# Server needs to run with permission to the private key
+x-oj-user: &oj_user "${PUID:-64646}:${PGID:-64646}"
+x-oj-o: &oj_o "noexec,uid=${PUID:-64646},gid=${PGID:-64646},mode=755"
+
 volumes:
   ojster:
+    name: "ojster"
     driver: local
     driver_opts:
       type: tmpfs
       device: tmpfs
-      o: noexec,uid=64646,gid=64646,mode=755
+      o: *oj_o
 
 secrets:
   private_key:
-    file: ./.env.keys
+    file: ./ojster_priv.key
 
 services:
 
   # Ojster server: only a single instance required
   ojster:
     container_name: ojster_server
-    image: dotenv/dotenvx         # Dotenvx image as base
-    init: true                    # Run tini as PID 1
-    user: 64646:64646             # Run as non-root
+    image: ojster/ojster
+    restart: unless-stopped
+    init: true                        # Run tini as PID 1
+    user: *oj_user                    # Run as non-root
     cap_drop:
-      - ALL                       # Least privilege
+      - ALL                           # Least privilege
     security_opt:
-      - no-new-privileges=true    # Block priv-esc through suid/sgid
-    read_only: true               # Immutable rootfs
-    tmpfs:                        # RAM-backed temporary workdir
-      - /tmp:noexec               # No execute permission
-    volumes:                      # Mount ojster binary and ipc volume
+      - no-new-privileges=true        # Block priv-esc through suid/sgid
+    read_only: true                   # Immutable rootfs
+    tmpfs:                            # RAM-backed temporary workdir
+      - /tmp:noexec                   # No execute permission
+    volumes:                          # Mount ipc volume
       - ojster:/mnt/ojster:noexec
-      - ./bin/ojster:/ojster:ro
     secrets:
-      - private_key               # Mount private key
-    entrypoint:
-      - /ojster                   # Run ojster instead of dotenvx
-      - serve
-    network_mode: none            # Run without network stack
-
-  # Example ojster client: integrate as many containers as you like
-  client:
-    container_name: ojster_example_client
-    image: bash                   # Example image
-    env_file:
-      - path: .env                # Pass all vars from .env into container environment
-        required: false
-    environment:
-      - EX_NEW_NAME=${EXAMPLE1-}  # And/or pass specific var from .env into container (allows renaming)
-    
-    ###########################################
-    ######## START OJSTER INTEGRATION #########
-    ### add these 4 lines to your container ###
-
-    init: true                    # Prepend docker-init binary before entrypoint
-    volumes:                      # Override the docker-init binary with with ojster
-      - ./bin/ojster:/sbin/docker-init:ro
-      - ojster:/mnt/ojster:ro     # Mount shared volume for socket communication
-
-    ###########################################  
-    ########## END OJSTER INTEGRATION #########
-    ###########################################
-
-    command:
-      - -c
-      - |
-        echo
-        env | grep EX
-        echo
-        echo 'This is an example.'
-        echo 'You should NOT actually log decrypted values!'
-
-    user: 64123:64123             # Default recommended hardening
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges=true
-    read_only: true
+      - private_key                   # Mount private key
+    command: ["serve"]
+    network_mode: none                # Run without network stack

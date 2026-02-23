@@ -1,4 +1,4 @@
-// Copyright 2026 Jip de Beer (Jip-Hop) and ojster contributers
+// Copyright 2026 Jip de Beer (Jip-Hop) and Ojster contributors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,19 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+//go:build !linux
+
+package tty
 
 import (
-	"fmt"
-	"net/http"
+	"io"
 	"os"
-	"time"
 )
 
-func loggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		next.ServeHTTP(w, r)
-		fmt.Fprintf(os.Stderr, "%s %s %s\n", r.Method, r.URL.Path, time.Since(start))
-	})
+// On macOS or Windows: no masking, just read normally.
+func ReadSecretFromStdin(prompt string) ([]byte, error) {
+	return io.ReadAll(os.Stdin)
 }

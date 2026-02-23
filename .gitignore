@@ -5,3 +5,4 @@
 /log
 /.log.old
 ojster-all.go.txt
+*.key

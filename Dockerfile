@@ -28,10 +28,6 @@ EOF
 # ============================================
 FROM builder AS test
 
-# Add dotenvx, required by tests
-COPY --from=dotenv/dotenvx  \
-    /usr/local/bin/dotenvx /usr/local/bin/dotenvx
-
 WORKDIR /tmp2
 WORKDIR /app
 
@@ -39,8 +35,7 @@ WORKDIR /app
 RUN --network=none --mount=type=tmpfs,target=/tmp <<EOF
     set -o pipefail
     mkdir output
-    go test $(go list ./... | grep -v internal/testutil | grep -v cmd/ojster) \
-        -v -coverprofile=output/coverage.out \
+    go test ./... -v -coverprofile=output/coverage.out \
         -ldflags="-X main.version=$(cat vers)" \
         | tee output/test.log
     go tool cover -html=output/coverage.out -o output/coverage.html
@@ -69,3 +64,5 @@ RUN --network=none go build \
 # ============================================
 FROM scratch AS binary-scratch
 COPY --from=binary /app/ojster /ojster
+ENTRYPOINT [ "/ojster" ]
+WORKDIR /o
