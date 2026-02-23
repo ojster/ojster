@@ -294,8 +294,8 @@ func parseLines(lines []string) (map[string]string, error) {
 				if keyRe.MatchString(linej) {
 					break
 				}
-				if strings.HasSuffix(linej, "'") {
-					parts = append(parts, strings.TrimSuffix(linej, "'"))
+				if before, ok := strings.CutSuffix(linej, "'"); ok {
+					parts = append(parts, before)
 					foundEnd = true
 					j++
 					break
