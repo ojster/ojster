@@ -44,7 +44,7 @@ PUID="$(id -u)"; PGID="$(id -g)"
 export PUID PGID
 
 # Common docker run flags
-COMMON=(
+COMMON1=(
   --user="${PUID:-64646}:${PGID:-64646}"
   --pull=never
   --read-only
@@ -54,7 +54,7 @@ COMMON=(
 )
 
 # Generate a keypair using Ojster's built-in keypair command
-docker run "${COMMON[@]}" --rm -v "$(pwd)":/o ojster/ojster keypair
+docker run "${COMMON1[@]}" --rm -v "$(pwd)":/o ojster/ojster keypair
 
 # Do NOT commit the ojster_priv.key to Git!
 
@@ -63,28 +63,28 @@ docker compose up -d
 
 # Encrypt a variable using Ojster's built-in seal command (no private key needed)
 # Enter an example secret and press Ctrl-D (twice) when done.
-docker run "${COMMON[@]}" -it --rm -v "$(pwd)":/o ojster/ojster seal EXAMPLE
+docker run "${COMMON1[@]}" -it --rm -v "$(pwd)":/o ojster/ojster seal EXAMPLE
 
 CLIENT_DIR=examples/01_client
 
-COMMON=(
+COMMON2=(
   --project-name=ojster-client-example
   --file=./"$CLIENT_DIR"/compose.base.yaml
   --project-directory=.
 )
 
 # Bring up example stack WITHOUT Ojster enabled
-docker compose "${COMMON[@]}" up
+docker compose "${COMMON2[@]}" up
 
 # Note in output that env var is still encrypted (prefix OJSTER-1:)
 
 # Bring up example stack WITH Ojster enabled
-docker compose "${COMMON[@]}" -f ./"$CLIENT_DIR"/compose.ojster.yaml up
+docker compose "${COMMON2[@]}" -f ./"$CLIENT_DIR"/compose.ojster.yaml up
 
 # Note in output that env var is now decrypted
 
 # Cleanup
-docker compose "${COMMON[@]}" down
+docker compose "${COMMON2[@]}" down
 docker compose down -v
 ```
 
