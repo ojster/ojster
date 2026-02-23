@@ -34,14 +34,14 @@ import (
 // ─────────────────────────────────────────────────────────────
 //
 
-func ExpectBodyContains(t *testing.T, rec *httptest.ResponseRecorder, substr string) {
+func expectBodyContains(t *testing.T, rec *httptest.ResponseRecorder, substr string) {
 	t.Helper()
 	if !strings.Contains(rec.Body.String(), substr) {
 		t.Fatalf("expected body to contain %q, got %q", substr, rec.Body.String())
 	}
 }
 
-func Sh(script string) []string { return []string{"sh", "-c", script} }
+func sh(script string) []string { return []string{"sh", "-c", script} }
 
 //
 // ─────────────────────────────────────────────────────────────
@@ -51,7 +51,7 @@ func Sh(script string) []string { return []string{"sh", "-c", script} }
 
 func TestHandlePost_Success(t *testing.T) {
 	body := []byte(`{"FOO":"bar"}`)
-	cmd := Sh(`printf '{"FOO":"ok"}'`)
+	cmd := sh(`printf '{"FOO":"ok"}'`)
 	rec := runPost(t, body, cmd, "/tmp/key")
 	ExpectStatus(t, rec, http.StatusOK)
 
@@ -74,11 +74,11 @@ func TestHandlePost_Errors(t *testing.T) {
 		wantCode int
 		wantSub  string
 	}{
-		{"invalid_json", "{bad json", Sh(`printf '{}'`), 400, "invalid JSON"},
-		{"invalid_key", `{"BAD-NAME":"v"}`, Sh(`printf '{}'`), 400, "invalid key"},
-		{"unexpected_keys", `{"GOOD":"v"}`, Sh(`printf '{"GOOD":"1","BAD":"x"}'`), 502, "unexpected keys"},
-		{"subprocess_invalid_json", `{"GOOD":"v"}`, Sh(`printf '{bad json'`), 502, "invalid JSON"},
-		{"exit_error", `{"FOO":"bar"}`, Sh(`exit 3`), 502, "exit 3"},
+		{"invalid_json", "{bad json", sh(`printf '{}'`), 400, "invalid JSON"},
+		{"invalid_key", `{"BAD-NAME":"v"}`, sh(`printf '{}'`), 400, "invalid key"},
+		{"unexpected_keys", `{"GOOD":"v"}`, sh(`printf '{"GOOD":"1","BAD":"x"}'`), 502, "unexpected keys"},
+		{"subprocess_invalid_json", `{"GOOD":"v"}`, sh(`printf '{bad json'`), 502, "invalid JSON"},
+		{"exit_error", `{"FOO":"bar"}`, sh(`exit 3`), 502, "exit 3"},
 		{"generic_error", `{"FOO":"bar"}`, []string{"does-not-exist"}, 500, "failed to run"},
 	}
 
@@ -86,7 +86,7 @@ func TestHandlePost_Errors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := runPost(t, []byte(tc.body), tc.cmd, "/x")
 			ExpectStatus(t, rec, tc.wantCode)
-			ExpectBodyContains(t, rec, tc.wantSub)
+			expectBodyContains(t, rec, tc.wantSub)
 		})
 	}
 }
@@ -155,7 +155,7 @@ func TestHandlePost_DirectUnsealPath_StatusMapping(t *testing.T) {
 
 		rec := runPost(t, reqBody, nil, "/nonexistent/priv.b64")
 		ExpectStatus(t, rec, http.StatusInternalServerError)
-		ExpectBodyContains(t, rec, "failed to read private key file")
+		expectBodyContains(t, rec, "failed to read private key file")
 	})
 
 	t.Run("malformed sealed value -> 502", func(t *testing.T) {
@@ -191,7 +191,7 @@ func TestHandlePost_DirectUnsealPath_StatusMapping(t *testing.T) {
 
 		rec := runPost(t, reqBody, nil, priv)
 		ExpectStatus(t, rec, http.StatusBadGateway)
-		ExpectBodyContains(t, rec, "sealed value for FOO malformed")
+		expectBodyContains(t, rec, "sealed value for FOO malformed")
 	})
 }
 
@@ -209,7 +209,7 @@ func TestHandlePost_DirectUnsealPath_SimulatedBranches(t *testing.T) {
 		body := []byte(`{"GOOD":"v"}`)
 		rec := runPost(t, body, nil, "/tmp/key")
 		ExpectStatus(t, rec, http.StatusBadGateway)
-		ExpectBodyContains(t, rec, "unseal returned unexpected keys")
+		expectBodyContains(t, rec, "unseal returned unexpected keys")
 	})
 
 	t.Run("unseal produced no acceptable env entries -> 502", func(t *testing.T) {
@@ -221,7 +221,7 @@ func TestHandlePost_DirectUnsealPath_SimulatedBranches(t *testing.T) {
 		body := []byte(`{"FOO":"plainvalue"}`)
 		rec := runPost(t, body, nil, "/tmp/key")
 		ExpectStatus(t, rec, http.StatusBadGateway)
-		ExpectBodyContains(t, rec, "unseal produced no acceptable env entries")
+		expectBodyContains(t, rec, "unseal produced no acceptable env entries")
 	})
 
 	t.Run("unseal missing keys -> 502", func(t *testing.T) {
@@ -233,7 +233,7 @@ func TestHandlePost_DirectUnsealPath_SimulatedBranches(t *testing.T) {
 		body := []byte(`{"FOO":"v"}`)
 		rec := runPost(t, body, nil, "/tmp/key")
 		ExpectStatus(t, rec, http.StatusBadGateway)
-		ExpectBodyContains(t, rec, "missing")
+		expectBodyContains(t, rec, "missing")
 	})
 
 	t.Run("unseal unknown worker error -> 502", func(t *testing.T) {
@@ -245,6 +245,6 @@ func TestHandlePost_DirectUnsealPath_SimulatedBranches(t *testing.T) {
 		body := []byte(`{"FOO":"v"}`)
 		rec := runPost(t, body, nil, "/tmp/key")
 		ExpectStatus(t, rec, http.StatusBadGateway)
-		ExpectBodyContains(t, rec, "decapsulation failed")
+		expectBodyContains(t, rec, "decapsulation failed")
 	})
 }
